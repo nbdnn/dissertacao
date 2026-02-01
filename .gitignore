@@ -1,0 +1,16 @@
+# Segurança (CRÍTICO)
+.env
+
+# Python e Cache
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+
+# Arquivos de dados baixados (para não pesar o repo)
+Primaries*.json
+Secondaries*.json
+
+# Logs e sistema
+*.log
+.DS_Store
