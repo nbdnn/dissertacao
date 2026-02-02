@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from org.orekit.time import AbsoluteDate  # type: ignore
 
+from .config import ELLIPSOID_BOUNDS
+
 
 def conjunctionAnalysis(primary: dict,
                         secondary: dict,
                         tcaTime: 'AbsoluteDate',
-                        creationDate,
-                        nameFile,
-                        save=True,
-                        verbose=False):
+                        verbose=False,
+                        ellipsoid_bounds=ELLIPSOID_BOUNDS):
     # type: ignore[reportMissingImports]
     from org.orekit.frames import FramesFactory  # type: ignore
     # type: ignore[reportMissingImports]
@@ -38,14 +38,6 @@ def conjunctionAnalysis(primary: dict,
     from org.hipparchus.geometry.euclidean.twod import Vector2D  # type: ignore
 
     inertialFrame = FramesFactory.getEME2000()
-
-    year = creationDate.year
-    month = creationDate.month
-    day = creationDate.day
-    hour = creationDate.hour
-    minute = creationDate.minute
-    second = creationDate.second
-    microsecond = creationDate.microsecond
 
     if (primary["OBJECT_TYPE"] == "DEBRIS"):
         rp = 1.
@@ -275,81 +267,43 @@ def conjunctionAnalysis(primary: dict,
     laas2015 = Laas2015()
     PoCLaas = laas2015.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
 
-    if save:
-        fid = open(nameFile, "a+")
+    # Calculate kc^2 (Safety Ellipsoid Violation)
+    # deltaR_UVW[0] => Radial (U)
+    # deltaR_UVW[1] => In-Track (V)
+    # deltaR_UVW[2] => Cross-Track (W)
+    rc_u, rc_v, rc_w = ellipsoid_bounds
 
-        # Format CSV line components
-        tca_str = f"{tcaTime}"
-        creation_str = f"{year}-{month}-{day} {hour}:{minute}:{second + microsecond / 1e6}"
-        miss_dist_km = f"{missDistance * 1.e-3:.4f}"
-        poc = f"{float(PoCMax):.4e}"
-        rel_vel = f"{np.linalg.norm(deltaV) * 1.e-3:.4f}"
-        radial_dist = f"{deltaR_UVW[0] * 1.e-3:.4f}"
+    # Avoid division by zero
+    rc_u = max(rc_u, 1e-6)
+    rc_v = max(rc_v, 1e-6)
+    rc_w = max(rc_w, 1e-6)
 
-        # Primary info
-        p_id = f"{primary['NORAD_CAT_ID']}"
-        p_name = f"{primary['OBJECT_NAME']}"
-        p_type = f"{primary['OBJECT_TYPE']}"
-        p_rad = f"{rp:.2f}"
-        p_l1 = f"{primary['TLE_LINE1']}"
-        p_l2 = f"{primary['TLE_LINE2']}"
+    x_component = (deltaR_UVW[0] / rc_u)**2
+    y_component = (deltaR_UVW[1] / rc_v)**2
+    z_component = (deltaR_UVW[2] / rc_w)**2
 
-        # Secondary info
-        s_id = f"{secondary['NORAD_CAT_ID']}"
-        s_name = f"{secondary['OBJECT_NAME']}"
-        s_type = f"{secondary['OBJECT_TYPE']}"
-        s_rad = f"{rs:.2f}"
-        s_l1 = f"{secondary['TLE_LINE1']}"
-        s_l2 = f"{secondary['TLE_LINE2']}"
+    kc_squared = x_component + y_component + z_component
 
-        line_parts = [
-            creation_str, tca_str, miss_dist_km, poc, rel_vel, radial_dist,
-            p_id, p_name, p_type, p_rad, p_l1, p_l2,
-            s_id, s_name, s_type, s_rad, s_l1, s_l2
-        ]
+    is_violated = float(kc_squared) < 1.0
 
-        # Format CSV line components
-        tca_str = f"{tcaTime}"
-        creation_str = f"{year}-{month}-{day} {hour}:{minute}:{second + microsecond / 1e6}"
-        miss_dist_km = f"{missDistance * 1.e-3:.4f}"
-        poc = f"{float(PoCMax):.4e}"
-        rel_vel = f"{np.linalg.norm(deltaV) * 1.e-3:.4f}"
-        radial_dist = f"{deltaR_UVW[0] * 1.e-3:.4f}"
+    # Relative Velocity in UVW frame
+    deltaV_UVW = np.matmul(R_UVW_Primary, deltaV)
+    relative_speed = np.linalg.norm(deltaV)
+    if relative_speed > 0:
+        rel_vel_versor = deltaV_UVW / relative_speed
+    else:
+        rel_vel_versor = np.zeros(3)
 
-        # Primary info
-        p_id = f"{primary['NORAD_CAT_ID']}"
-        p_name = f"{primary['OBJECT_NAME']}"
-        p_type = f"{primary['OBJECT_TYPE']}"
-        p_rad = f"{rp:.2f}"
-        p_l1 = f"{primary['TLE_LINE1']}"
-        p_l2 = f"{primary['TLE_LINE2']}"
-
-        # Secondary info
-        s_id = f"{secondary['NORAD_CAT_ID']}"
-        s_name = f"{secondary['OBJECT_NAME']}"
-        s_type = f"{secondary['OBJECT_TYPE']}"
-        s_rad = f"{rs:.2f}"
-        s_l1 = f"{secondary['TLE_LINE1']}"
-        s_l2 = f"{secondary['TLE_LINE2']}"
-
-        line_parts = [
-            creation_str, tca_str, miss_dist_km, poc, rel_vel, radial_dist,
-            p_id, p_name, p_type, p_rad, p_l1, p_l2,
-            s_id, s_name, s_type, s_rad, s_l1, s_l2
-        ]
-
-        fid.write("\n" + ",".join(line_parts))
-        fid.close()
-
-    print(f'\nSecondary: {secondary["OBJECT_NAME"]}    NORAD:{secondary["NORAD_CAT_ID"]}')
-    print(f'TCA: {tcaTime}')
-    print(f"Miss Distance: {missDistance * 1.e-3:.4f} km")
-    print(f"Max probability of collision: {float(PoCMax):.4e}")
-    print(f"Relativity velocity: {np.linalg.norm(deltaV) * 1.e-3:.4f} km/s")
-    print(f"Radial distance: {deltaR_UVW[0] * 1.e-3:.4f} km")
-    print(f"In-track distance: {deltaR_UVW[1] * 1.e-3:.4f} km")
-    print(f"Cross-track distance: {deltaR_UVW[2] * 1.e-3:.4f} km")
-    print(f"Dilution threshold: {np.sqrt(float(k2sigmaMax)) * 1.e-3:.4f} km")
+    if verbose:
+        print(f'\nSecondary: {secondary["OBJECT_NAME"]}    NORAD:{secondary["NORAD_CAT_ID"]}')
+        print(f'TCA: {tcaTime}')
+        print(f"Miss Distance: {missDistance * 1.e-3:.4f} km")
+        print(f"Max probability of collision: {float(PoCMax):.4e}")
+        print(f"Relativity velocity: {np.linalg.norm(deltaV) * 1.e-3:.4f} km/s")
+        print(f"Radial distance: {deltaR_UVW[0] * 1.e-3:.4f} km")
+        print(f"In-track distance: {deltaR_UVW[1] * 1.e-3:.4f} km")
+        print(f"Cross-track distance: {deltaR_UVW[2] * 1.e-3:.4f} km")
+        print(f"Dilution threshold: {np.sqrt(float(k2sigmaMax)) * 1.e-3:.4f} km")
 
     if verbose:
         print(f"PoC calculated using Klinkrad: {float(PoCMax):.4e} (Max Alfriend)\n")
@@ -371,12 +325,26 @@ def conjunctionAnalysis(primary: dict,
 
         print(f"PoC calculated using Orekit: {PoCLaas.getValue():.4e} (Laas 2015)")
         print(f"Orekit's method is a max prob? {PoCLaas.isMaxProbability()}\n")
-    print("##########")
+    if verbose:
+        print(f"Safety Ellipsoid Violation (kc^2): {float(kc_squared):.4f} (Violated if < 1.0)")
+        print(f"Bounds (U, V, W): {rc_u:.1f}, {rc_v:.1f}, {rc_w:.1f} m")
+        print("##########")
 
     return {
+        "primary_name": primary["OBJECT_NAME"],
+        "primary_id": primary["NORAD_CAT_ID"],
         "secondary_name": secondary["OBJECT_NAME"],
         "secondary_id": secondary["NORAD_CAT_ID"],
         "tca_utc": tcaTime.toString(),
         "min_distance_m": float(missDistance),
-        "poc_max": float(PoCMax)
+        "kc_squared": float(kc_squared),
+        "radial_dist_m": float(deltaR_UVW[0]),
+        "along_track_dist_m": float(deltaR_UVW[1]),
+        "cross_track_dist_m": float(deltaR_UVW[2]),
+        "relative_speed_m_s": float(relative_speed),
+        "radial_velocity_m_s": float(deltaV_UVW[0]),
+        "along_track_velocity_m_s": float(deltaV_UVW[1]),
+        "cross_track_velocity_m_s": float(deltaV_UVW[2]),
+        "relative_velocity_versor": [float(v) for v in rel_vel_versor],
+        "is_violated": is_violated
     }

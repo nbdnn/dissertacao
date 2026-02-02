@@ -63,11 +63,20 @@ def main():
     # parser.add_argument("tca", help="TCA Date") # Removed as requested
     parser.add_argument("--json-file", default="specific_tles.json", help="Path to TLE JSON file")
     parser.add_argument("--days", type=float, default=7.0, help="Simulation duration in days")
+    # parser.add_argument(
+    #    '--threshold', type=float, default=5000.0, help="Distância de alerta (metros)"
+    # )
     parser.add_argument(
-        '--threshold', type=float, default=5000.0, help="Distância de alerta (metros)"
+        '--ellipsoid', nargs=3, type=float, default=[1000.0, 5000.0, 1000.0],
+        help="Semieixos do elipsoide de segurança (R_U, R_V, R_W) em metros."
     )
 
     args = parser.parse_args()
+
+    # Calculate sieve threshold (100x max axis)
+    rc_u, rc_v, rc_w = args.ellipsoid
+    max_axis = max(rc_u, rc_v, rc_w)
+    sieve_threshold = 100.0 * max_axis
 
     primary, secondary = load_tles_from_json(args.json_file)
 
@@ -94,7 +103,8 @@ def main():
     sieveAlgorithm(
         primariesID=[primary["NORAD_CAT_ID"]],
         daysOfSimulation=args.days,
-        threshold=args.threshold,
+        threshold=sieve_threshold,
+        ellipsoid_bounds=tuple(args.ellipsoid),
         verbose=False,
         verboseConjAnalysis=True,
         start_date=simulation_start,

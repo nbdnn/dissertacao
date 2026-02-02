@@ -33,10 +33,21 @@ def main():
     )
     parser.add_argument('--days', type=float, default=7.0, help="Dias de simulação")
     parser.add_argument(
-        '--threshold', type=float, default=5000.0, help="Distância de alerta (metros)"
+        '--ellipsoid', nargs=3, type=float, default=[1000.0, 5000.0, 1000.0],
+        help="Semieixos do elipsoide de segurança (R_U, R_V, R_W) em metros. Ex: 2000 10000 10000"
     )
 
     args = parser.parse_args()
+
+    # Calcular threshold escalar baseado nas regras do elipsoide (100x maior eixo)
+    # ou usar o argumento antigo se não for definido (mas aqui definimos um default)
+    # Vamos priorizar a lógica do elipsoide pois é a nova regra de negócio.
+    rc_u, rc_v, rc_w = args.ellipsoid
+    max_axis = max(rc_u, rc_v, rc_w)
+    sieve_threshold = max_axis
+
+    logger.info(f"Elipsoide de Segurança: Radial={rc_u}m, In-Track={rc_v}m, Cross-Track={rc_w}m")
+    logger.info(f"Threshold escalar para Sieve (max axis): {sieve_threshold}m")
 
     # 1. Setup Orekit
     logger.info("Inicializando Orekit...")
@@ -103,13 +114,14 @@ def main():
     #    utc
     # )
 
-    logger.info(f"Iniciando cálculo para {args.days} dias. (Threshold: {args.threshold}m)")
+    logger.info(f"Iniciando cálculo para {args.days} dias. (Threshold Sieve: {sieve_threshold}m)")
     start_time = time.time()
 
     results = sieveAlgorithm(
         primariesID=[primary_data["NORAD_CAT_ID"]],
         daysOfSimulation=args.days,
-        threshold=args.threshold,
+        threshold=sieve_threshold,
+        ellipsoid_bounds=tuple(args.ellipsoid),
         verbose=False,  # Or args.verbose if added
         start_date=None,  # Uses real time
         tles=([primary_data], secondaries)

@@ -7,10 +7,11 @@ __pycache__/
 .venv/
 .uv/
 
-# Arquivos de dados baixados (para não pesar o repo)
-Primaries*.json
-Secondaries*.json
-
 # Logs e sistema
 *.log
 .DS_Store
+
+cenario1/__pycache__/
+cenario1/analysis_results/
+screenings/
+./TLE.json

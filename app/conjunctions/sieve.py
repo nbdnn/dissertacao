@@ -5,6 +5,7 @@ from .filter_pre import filterPre
 from .bisection import bisectionMethod
 from .conjunction_analysis import conjunctionAnalysis
 from ..download_all_tles import requestTles
+from .config import ELLIPSOID_BOUNDS
 
 if TYPE_CHECKING:
     from org.orekit.time import AbsoluteDate  # type: ignore  # noqa: F401
@@ -43,10 +44,12 @@ def sieveAlgorithm(
         primariesID: list,
         daysOfSimulation: int,
         threshold: float,
+        ellipsoid_bounds=ELLIPSOID_BOUNDS,
         verbose=False,
         verboseConjAnalysis=False,
         start_date=None,
-        tles=None):
+        tles=None,
+        screening_mode=False):
 
     # type: ignore[reportMissingImports]
     from org.orekit.time import AbsoluteDate, TimeScalesFactory  # type: ignore  # noqa: F811
@@ -82,24 +85,19 @@ def sieveAlgorithm(
         primaries, secondaries = requestTle(primariesID)
 
     for primary in primaries:
-        nameFile = (
-            f"Conjunctions_{primary['NORAD_CAT_ID']}_"
-            f"{creationDate.year}{creationDate.month}{creationDate.day}"
-            f"T{creationDate.hour}_{creationDate.minute}.csv"
-        )
-        fid = open(nameFile, "w+")
-        fid.write(
-            "CREATED,TCA,MIN_RNG (km),PC,RELATIVITY VEL (km/s),RADIAL DISTANCE (km),"
-            "SAT_1_ID,SAT_1_NAME,SAT1_OBJECT_TYPE,SAT_1_EXCL_RADII (m),"
-            "SAT1_TLE_LINE1,SAT1_TLE_LINE2,SAT_2_ID,SAT_2_NAME,"
-            "SAT2_OBJECT_TYPE,SAT_2_EXCL_RADII (m),SAT2_TLE_LINE1,SAT2_TLE_LINE2"
-        )
-        fid.close()
 
         if verbose:
             print(f'Primary: {primary["OBJECT_NAME"]}    NORAD:{primary["NORAD_CAT_ID"]}')
 
-        for secondary in secondaries:
+        total_secondaries = len(secondaries)
+        for idx, secondary in enumerate(secondaries):
+            # Update progress check to every 1 item to show life, as processing is slow
+            percent = 100.0 * idx / total_secondaries
+            print(
+                f"\rProgress: {percent:.2f}% ",
+                f"({idx}/{total_secondaries}) ",
+                f"- Checking {secondary['OBJECT_NAME'][:10]}...", end="", flush=True)
+
             if secondary["NORAD_CAT_ID"] != primary["NORAD_CAT_ID"]:
                 if verbose:
                     print(
@@ -150,9 +148,20 @@ def sieveAlgorithm(
                                 primary=primary,
                                 secondary=secondary,
                                 tcaTime=initialTime.shiftedBy(t[i] + tca),
-                                creationDate=creationDate,
-                                nameFile=nameFile,
-                                verbose=verboseConjAnalysis
+                                verbose=verboseConjAnalysis,
+                                ellipsoid_bounds=ellipsoid_bounds
                             )
-                            conjunctions.append(result)
+                            if result['is_violated']:
+                                if screening_mode:
+                                    conjunctions.append({
+                                        "secondary_name": result["secondary_name"],
+                                        "secondary_id": result["secondary_id"],
+                                        "tca": result["tca_utc"],
+                                        "kc2": result["kc_squared"],
+                                        "is_violated": result["is_violated"]
+                                    })
+                                    # Removed break as requested to save all conjunctions
+                                else:
+                                    conjunctions.append(result)
+        print()
     return conjunctions  # Could be implemented returns when an error occurred
