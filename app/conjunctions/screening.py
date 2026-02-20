@@ -27,15 +27,39 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Screening inicial de conjunções (100x Elipsoide)."
+        description="Screening inicial de conjunções (10x Elipsoide)."
     )
     parser.add_argument('--base', type=int, default=47699, help="NORAD ID do satélite base")
     parser.add_argument('--days', type=float, default=7.0, help="Dias de simulação")
+    parser.add_argument(
+        '--start-date',
+        type=str,
+        help="Data de início (ISO: YYYY-MM-DDTHH:MM:SS) [Default: 2026-02-11 12:00:00 UTC]"
+    )
 
     args = parser.parse_args()
 
     logger.info("Inicializando Orekit...")
     setup_orekit()
+
+    # Determine Start Date
+    start_date = None
+
+    # 1. Try Argument
+    if args.start_date:
+        try:
+            from datetime import datetime
+            start_date = datetime.fromisoformat(args.start_date)
+            logger.info(f"Data de início definida via argumento: {start_date}")
+        except ValueError:
+            logger.error(f"Formato de data inválido: {args.start_date}")
+            sys.exit(1)
+
+    # 2. Fallback to Fixed Default
+    if not start_date:
+        from datetime import datetime, timezone
+        start_date = datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc)
+        logger.info(f"Data de início padrão aplicada: {start_date}")
 
     logger.info("Baixando catálogo de TLEs...")
     all_cat = requestTles()
@@ -67,8 +91,8 @@ def main():
         logger.error(f"Satélite base {args.base} não encontrado.")
         sys.exit(1)
 
-    # Configuração do Elipsoide de Screening (100x base)
-    # Base: 1000, 5000, 1000 -> Screening: 100000, 500000, 100000
+    # Configuração do Elipsoide de Screening (10x base)
+    # Base: 1000, 5000, 1000 -> Screening: 10000, 50000, 10000
     base_bounds = ELLIPSOID_BOUNDS
     screening_bounds = tuple(SCREENING_MULTIPLIER * x for x in base_bounds)
 
@@ -94,6 +118,7 @@ def main():
         verbose=False,
         tles=([primary_data], secondaries),
         verboseConjAnalysis=False,
+        start_date=start_date,
         screening_mode=True
     )
 

@@ -4,14 +4,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from org.orekit.time import AbsoluteDate  # type: ignore
 
-from .config import ELLIPSOID_BOUNDS
+from .config import ELLIPSOID_BOUNDS, rc, POC_THRESHOLD
 
 
 def conjunctionAnalysis(primary: dict,
                         secondary: dict,
                         tcaTime: 'AbsoluteDate',
                         verbose=False,
-                        ellipsoid_bounds=ELLIPSOID_BOUNDS):
+                        ellipsoid_bounds=ELLIPSOID_BOUNDS,
+                        primary_state_vector=None,
+                        secondary_state_vector=None):
     # type: ignore[reportMissingImports]
     from org.orekit.frames import FramesFactory  # type: ignore
     # type: ignore[reportMissingImports]
@@ -27,48 +29,58 @@ def conjunctionAnalysis(primary: dict,
     # type: ignore[reportMissingImports]
     from org.orekit.orbits import CartesianOrbit, OrbitType, PositionAngleType  # type: ignore
     # type: ignore[reportMissingImports]
-    from org.orekit.utils import Constants  # type: ignore
+    from org.orekit.utils import Constants, PVCoordinates  # type: ignore
     # type: ignore[reportMissingImports]
     from org.orekit.propagation import StateCovariance  # type: ignore
     from org.hipparchus.linear import (  # type: ignore
         MatrixUtils,
-        LUDecomposition,
-        Array2DRowRealMatrix,
     )
-    from org.hipparchus.geometry.euclidean.twod import Vector2D  # type: ignore
+
+    from org.hipparchus.geometry.euclidean.threed import Vector3D  # type: ignore
 
     inertialFrame = FramesFactory.getEME2000()
 
-    if (primary["OBJECT_TYPE"] == "DEBRIS"):
-        rp = 1.
-    elif primary["OBJECT_TYPE"] == "ROCKET BODY":
-        rp = 3.
+    if primary_state_vector and secondary_state_vector:
+        # Use provided vectors (tuples: date, pos_arr, vel_arr, cov_opt)
+        # Note: tcaTime argument is redundant if we assume vectors ARE at TCA,
+        # but let's assume they are indeed at TCA.
+
+        # Primary
+        _, p_pos, p_vel, p_cov = primary_state_vector
+        pvPrimary = PVCoordinates(
+            Vector3D(float(p_pos[0]), float(p_pos[1]), float(p_pos[2])),
+            Vector3D(float(p_vel[0]), float(p_vel[1]), float(p_vel[2]))
+        )
+
+        # Secondary
+        _, s_pos, s_vel, s_cov = secondary_state_vector
+        pvSecondary = PVCoordinates(
+            Vector3D(float(s_pos[0]), float(s_pos[1]), float(s_pos[2])),
+            Vector3D(float(s_vel[0]), float(s_vel[1]), float(s_vel[2]))
+        )
+
+        posPrimary = pvPrimary.getPosition()
+        velPrimary = pvPrimary.getVelocity()
+
+        posSecondary = pvSecondary.getPosition()
+        velSecondary = pvSecondary.getVelocity()
+
     else:
-        rp = 5.
+        # TLE Propagation Fallback
+        propagPrimary = TLEPropagator.selectExtrapolator(
+            TLE(primary["TLE_LINE1"], primary["TLE_LINE2"])
+        )
+        propagSecondary = TLEPropagator.selectExtrapolator(
+            TLE(secondary["TLE_LINE1"], secondary["TLE_LINE2"])
+        )
 
-    if (secondary["OBJECT_TYPE"] == "DEBRIS"):
-        rs = 1.
-    elif secondary["OBJECT_TYPE"] == "ROCKET BODY":
-        rs = 3.
-    else:
-        rs = 5.
+        pvPrimary = propagPrimary.getPVCoordinates(tcaTime, inertialFrame)
+        posPrimary = pvPrimary.getPosition()
+        velPrimary = pvPrimary.getVelocity()
 
-    rc = rp + rs
-
-    propagPrimary = TLEPropagator.selectExtrapolator(
-        TLE(primary["TLE_LINE1"], primary["TLE_LINE2"])
-    )
-    propagSecondary = TLEPropagator.selectExtrapolator(
-        TLE(secondary["TLE_LINE1"], secondary["TLE_LINE2"])
-    )
-
-    pvPrimary = propagPrimary.getPVCoordinates(tcaTime, inertialFrame)
-    posPrimary = pvPrimary.getPosition()
-    velPrimary = pvPrimary.getVelocity()
-
-    pvSecondary = propagSecondary.getPVCoordinates(tcaTime, inertialFrame)
-    posSecondary = pvSecondary.getPosition()
-    velSecondary = pvSecondary.getVelocity()
+        pvSecondary = propagSecondary.getPVCoordinates(tcaTime, inertialFrame)
+        posSecondary = pvSecondary.getPosition()
+        velSecondary = pvSecondary.getVelocity()
 
     rPrimary = np.array((posPrimary.getX(), posPrimary.getY(), posPrimary.getZ()))
     vPrimary = np.array((velPrimary.getX(), velPrimary.getY(), velPrimary.getZ()))
@@ -81,32 +93,41 @@ def conjunctionAnalysis(primary: dict,
         np.linalg.cross(rPrimary, vPrimary)
     )
     V_Primary = np.linalg.cross(W_Primary, U_Primary)
+    R_UVW_Primary = np.array((U_Primary, V_Primary, W_Primary))
 
     U_Secondary = rSecondary / np.linalg.norm(rSecondary)
     W_Secondary = np.linalg.cross(rSecondary, vSecondary) / np.linalg.norm(
         np.linalg.cross(rSecondary, vSecondary)
     )
     V_Secondary = np.linalg.cross(W_Secondary, U_Secondary)
-
-    R_UVW_Primary = np.array((U_Primary, V_Primary, W_Primary))
     R_UVW_Secondary = np.array((U_Secondary, V_Secondary, W_Secondary))
 
-    covUVW = np.array((
-        (100**2, 0, 0),
-        (0, 300**2, 0),
-        (0, 0, 100**2)
-    ))
+    # Assuming covariance is already in EME2000/XYZ or needs rotation?
+    # Typically ephemerides provide XYZ covariance.
+    # If the input cov is 6x6, we extract 3x3 position block?
+    # The logic below expects covXYZ_Primary to be 3x3 for
+    # calculating collision probability 2D logic (Cb).
+    # But later for Orekit PoC, it constructs 6x6.
 
-    covXYZ_Primary = np.matmul(
-        np.matmul(np.transpose(R_UVW_Primary), covUVW), R_UVW_Primary
-    )
-    covXYZ_Secondary = np.matmul(
-        np.matmul(np.transpose(R_UVW_Secondary), covUVW), R_UVW_Secondary
-    )
-    covXYZ = covXYZ_Primary + covXYZ_Secondary
+    # Let's assume input covariance is 6x6 or 3x3 numpy array in XYZ Frame.
+    p_cov_in = primary_state_vector[3]
+    if p_cov_in.shape == (6, 6):
+        covXYZ_Primary = p_cov_in[0:3, 0:3]  # Extract 3x3 pos
+    else:
+        covXYZ_Primary = p_cov_in
 
-    # if verbose:
-    #     print(f"CovXYZ:\n{covXYZ}")
+    s_cov_in = secondary_state_vector[3]
+    if s_cov_in.shape == (6, 6):
+        covXYZ_Secondary = s_cov_in[0:3, 0:3]
+    else:
+        covXYZ_Secondary = s_cov_in
+
+    # Rotate Covariance to UVW
+    covUVW_Primary = R_UVW_Primary @ covXYZ_Primary @ R_UVW_Primary.T
+    sigma_UVW_Primary = np.sqrt(np.diag(covUVW_Primary))
+
+    covUVW_Secondary = R_UVW_Secondary @ covXYZ_Secondary @ R_UVW_Secondary.T
+    sigma_UVW_Secondary = np.sqrt(np.diag(covUVW_Secondary))
 
     deltaR = np.array(
         (posPrimary.getX(), posPrimary.getY(), posPrimary.getZ())
@@ -119,121 +140,19 @@ def conjunctionAnalysis(primary: dict,
 
     deltaR_UVW = np.matmul(R_UVW_Primary, deltaR)
 
-    Xb = deltaR / np.linalg.norm(deltaR)
-    Yb = np.linalg.cross(deltaR, deltaV) / np.linalg.norm(
-        np.linalg.cross(deltaR, deltaV)
-    )
-
-    R_XbYb = np.array((Xb, Yb))
-
-    Cb = np.matmul(np.matmul(R_XbYb, covXYZ), np.transpose(R_XbYb))
-
-    # if verbose:
-    #     print(f"Cb:\n{Cb}")
-    deltaRb = np.matmul(R_XbYb, deltaR)
-
-    # if verbose:
-    #     print(f"deltaRb: {deltaRb}")
-
-    eigCbValues, eigCbVectors = np.linalg.eig(Cb)
-    # if verbose:
-    #     print(f"\nEigvalues of Cb: {eigCbValues}")
-    #     print(f"Eigvectors of Cb:\n{eigCbVectors}")
-
-    if eigCbValues[0] > eigCbValues[1]:
-        xb = eigCbVectors[:, 0]
-        rotDiagCb = np.array((eigCbVectors[:, 0], eigCbVectors[:, 1]))
-    else:
-        xb = eigCbVectors[:, 1]
-        rotDiagCb = np.array((eigCbVectors[:, 1], eigCbVectors[:, 0]))
-
-    # if verbose:
-    #     print(f"xb: {xb}")
-
-    CbDiag = np.matmul(np.matmul(rotDiagCb, Cb), np.transpose(rotDiagCb))
-    sigmaX = np.sqrt(CbDiag[0, 0])
-    sigmaY = np.sqrt(CbDiag[1, 1])
-
-    # if verbose:
-    #     print(f"CbDiag:\n{CbDiag}")
-    #     print(f"sigmaX = {sigmaX}")
-    #     print(f"sigmaY = {sigmaY}")
-
-    phi = np.atan2(xb[1], xb[0])
-
-    rotationPhi = np.array((
-        (np.cos(phi), -np.sin(phi)),
-        (np.sin(phi), np.cos(phi)),
-    ))
-
-    deltaRtca = np.matmul(rotationPhi, deltaRb)
-    xm = deltaRtca[0]
-    ym = deltaRtca[1]
-
-    # if verbose:
-    #     print(f"xm = {xm}")
-    #     print(f"ym = {ym}")
-
-    deltaRtca = deltaRtca[np.newaxis, :]
-
-    deltaRb = deltaRb[np.newaxis, :]
-
-    k2sigmaMax = 0.5 * np.matmul(np.matmul(deltaRb, np.linalg.inv(Cb)), np.transpose(deltaRb))
-    denom_term1 = np.exp(1) * np.sqrt(np.linalg.det(CbDiag))
-    denom_term2 = np.matmul(
-        np.matmul(deltaRtca, np.linalg.inv(CbDiag)),
-        np.transpose(deltaRtca)
-    )
-    denom = denom_term1 * denom_term2
-    PoCMax = rc**2. / denom
-
-    position = Vector2D(float(xm), float(ym))
-
-    covariance_values = [
-        [float(sigmaX * sigmaX), 0.],
-        [0., float(sigmaY * sigmaY)]
-    ]
-    covariance = MatrixUtils.createRealMatrix(2, 2)
-    for i in range(2):
-        for j in range(2):
-            covariance.setEntry(i, j, covariance_values[i][j])
-
-    # if verbose:
-    #     print(f"Position: {position}\nCovariance:\n{covariance}")
-
-    covarianceMatrixInverse = LUDecomposition(covariance).getSolver().getInverse()
-    otherPositionOnCollisionPlaneMatrix = Array2DRowRealMatrix(position.toArray())
-
-    # if verbose:
-    #     print(f"Covatiance Matrix inverse:\n{covarianceMatrixInverse}")
-    #     print(f"PositionOnCollisionPlaneMatrix:\n{otherPositionOnCollisionPlaneMatrix}")
-
-    squaredMahalanobisDistance = otherPositionOnCollisionPlaneMatrix.transposeMultiply(
-        covarianceMatrixInverse.multiply(otherPositionOnCollisionPlaneMatrix)
-    ).getEntry(0, 0)
-
-    covarianceMatrixDeterminant = LUDecomposition(covariance).getDeterminant()
-
-    num = np.exp(-0.5 * squaredMahalanobisDistance) * rc * rc
-    den = 2 * np.sqrt(covarianceMatrixDeterminant)
-    PoCValueAlfriendOrekit = num / den
-
-    PoCValueAlfriendMaxOrekit = rc * rc / (
-        squaredMahalanobisDistance * np.sqrt(covarianceMatrixDeterminant) * np.e
-    )
-
     cov_mat1 = MatrixUtils.createRealMatrix(6, 6)
     for i in range(3):
         for j in range(3):
-            cov_mat1.setEntry(i, j, float(covXYZ_Primary[i][j]))
+            # Enforce symmetry by averaging off-diagonal elements
+            val = 0.5 * (float(covXYZ_Primary[i][j]) + float(covXYZ_Primary[j][i]))
+            cov_mat1.setEntry(i, j, val)
 
     cov_mat2 = MatrixUtils.createRealMatrix(6, 6)
     for i in range(3):
         for j in range(3):
-            cov_mat2.setEntry(i, j, float(covXYZ_Secondary[i][j]))
-
-    # if verbose:
-    #     print(f"CovXYZ jarray: {jarray}")
+            # Enforce symmetry
+            val = 0.5 * (float(covXYZ_Secondary[i][j]) + float(covXYZ_Secondary[j][i]))
+            cov_mat2.setEntry(i, j, val)
 
     orbit1 = CartesianOrbit(pvPrimary,
                             FramesFactory.getEME2000(),
@@ -284,7 +203,15 @@ def conjunctionAnalysis(primary: dict,
 
     kc_squared = x_component + y_component + z_component
 
-    is_violated = float(kc_squared) < 1.0
+    # Default violation check (Safety Ellipsoid)
+    is_violated_ellipsoid = float(kc_squared) < 1.0
+
+    # If Ephemeris (State Vectors provided), use Probability of Collision
+    if primary_state_vector is not None and secondary_state_vector is not None:
+        poc_max = float(PoCAlfriend.getValue())
+        is_violated = poc_max >= POC_THRESHOLD
+    else:
+        is_violated = is_violated_ellipsoid
 
     # Relative Velocity in UVW frame
     deltaV_UVW = np.matmul(R_UVW_Primary, deltaV)
@@ -298,18 +225,12 @@ def conjunctionAnalysis(primary: dict,
         print(f'\nSecondary: {secondary["OBJECT_NAME"]}    NORAD:{secondary["NORAD_CAT_ID"]}')
         print(f'TCA: {tcaTime}')
         print(f"Miss Distance: {missDistance * 1.e-3:.4f} km")
-        print(f"Max probability of collision: {float(PoCMax):.4e}")
         print(f"Relativity velocity: {np.linalg.norm(deltaV) * 1.e-3:.4f} km/s")
         print(f"Radial distance: {deltaR_UVW[0] * 1.e-3:.4f} km")
         print(f"In-track distance: {deltaR_UVW[1] * 1.e-3:.4f} km")
         print(f"Cross-track distance: {deltaR_UVW[2] * 1.e-3:.4f} km")
-        print(f"Dilution threshold: {np.sqrt(float(k2sigmaMax)) * 1.e-3:.4f} km")
 
     if verbose:
-        print(f"PoC calculated using Klinkrad: {float(PoCMax):.4e} (Max Alfriend)\n")
-
-        print(f"Orekit manual: {PoCValueAlfriendOrekit:.4e} (Alfriend 1999)")
-        print(f"Orekit manual: {PoCValueAlfriendMaxOrekit:.4e} (Max Alfriend 1999)\n")
 
         print(f"PoC calculated using Orekit: {PoCAlfriend.getValue():.4e} (Alfriend 1999)")
         print(f"Orekit's method is a max prob? {PoCAlfriend.isMaxProbability()}\n")
@@ -330,13 +251,15 @@ def conjunctionAnalysis(primary: dict,
         print(f"Bounds (U, V, W): {rc_u:.1f}, {rc_v:.1f}, {rc_w:.1f} m")
         print("##########")
 
-    return {
+    result = {
         "primary_name": primary["OBJECT_NAME"],
         "primary_id": primary["NORAD_CAT_ID"],
         "secondary_name": secondary["OBJECT_NAME"],
         "secondary_id": secondary["NORAD_CAT_ID"],
+        # ... and so it continues ...
         "tca_utc": tcaTime.toString(),
         "min_distance_m": float(missDistance),
+        "rc": float(rc),
         "kc_squared": float(kc_squared),
         "radial_dist_m": float(deltaR_UVW[0]),
         "along_track_dist_m": float(deltaR_UVW[1]),
@@ -346,5 +269,29 @@ def conjunctionAnalysis(primary: dict,
         "along_track_velocity_m_s": float(deltaV_UVW[1]),
         "cross_track_velocity_m_s": float(deltaV_UVW[2]),
         "relative_velocity_versor": [float(v) for v in rel_vel_versor],
-        "is_violated": is_violated
+        "is_violated": is_violated,
     }
+
+    if "TLE_LINE1" in primary:
+        result["primary_tle_line1"] = primary["TLE_LINE1"]
+        result["primary_tle_line2"] = primary["TLE_LINE2"]
+
+    if "TLE_LINE1" in secondary:
+        result["secondary_tle_line1"] = secondary["TLE_LINE1"]
+        result["secondary_tle_line2"] = secondary["TLE_LINE2"]
+
+    result["covariance_matrix_uvw_primary"] = covUVW_Primary.tolist()
+    result["covariance_matrix_uvw_secondary"] = covUVW_Secondary.tolist()
+
+    result["sigma_uvw_primary"] = sigma_UVW_Primary.tolist()
+    result["sigma_uvw_secondary"] = sigma_UVW_Secondary.tolist()
+
+    result["collision_probability"] = {
+        "alfriend1999": float(PoCAlfriend.getValue()),
+        "alfriend1999_max": float(PoCMaxOrekit.getValue()),
+        "alfano2005": float(PoCAlfano.getValue()),
+        "patera2005": float(PoCPatera.getValue()),
+        "laas2015": float(PoCLaas.getValue()),
+    }
+
+    return result

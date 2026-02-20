@@ -14,4 +14,14 @@ __pycache__/
 cenario1/__pycache__/
 cenario1/analysis_results/
 screenings/
-./TLE.json
+TLE.json
+
+cenario2/__pycache__/
+cenario2/data/
+cenario2/results/
+cenario2/analysis_results/
+cenario2/recalculation_results/
+cenario2/screening_ephemeris/
+cenario2/screening_tle/
+
+java_pipeline/

@@ -170,7 +170,7 @@ def main():
 
         # Run Bisection (h=0.1s for higher precision in refinement?)
         # Original sieve used h=1.0. Let's use h=0.5 for a balance
-        times, distances = bisectionMethod(
+        times, distances, __ = bisectionMethod(
             search_start,
             primary_data,
             secondary,
@@ -189,18 +189,95 @@ def main():
 
         final_tca_date = search_start.shiftedBy(float(times[best_idx]))
 
+        # bisectionMethod now returns only position: (date, pos)
+        # We need to compute velocity and covariance using the propagation method.
+        # Since TLE propagation provides both Pos and Vel, we can reuse it?
+        # Re-propagate at final_tca_date using conjunctionAnalysis internal propagator
+        # or manually here.
+
+        # Let's clean up state passing
+        # conjunctionAnalysis expects full state or TLE data.
+        # If we pass state vector with None velocity, it might fail internal logic if velocity
+        # is needed.
+        # It needs velocity for metrics like Relative Velocity and CoB.
+
+        # We can extract pos from bisection result, but velocity must be re-calculated.
+        # Actually bisectionMethod for TLE case (no interpolation) iterates propagation.
+        # But we changed bisectionMethod to return ONLY position for optimization!
+        # Wait, the optimization in bisection.py was inside `bisectionMethod`.
+        # For TLE case (when no states list provided), bisectionMethod calculates PV coordinates.
+        #
+        # Let's check bisection.py again. When use_interpolation is FALSE (TLE mode),
+        # it calls `propagator.getPVCoordinates(date, inertialFrame)`.
+        # And creates `p_state = (simulationTime, posPrimArr, velPrimArr, p_cov)`.
+        #
+        # Oh, I modified bisection.py to only capture POSITION in the state tuple!
+        #
+        # "p_state = (simulationTime, posPrimArr)"
+        #
+        # So for Cenario 1 (TLE), we lost Velocity in the return of bisectionMethod.
+        # We need to re-propagate at TCA to get Velocity and Covariance.
+
+        # Re-propagate to get full state at TCA
+        from org.orekit.propagation.analytical.tle import TLE, TLEPropagator  # type: ignore
+        from org.orekit.frames import FramesFactory  # type: ignore
+
+        inertialFrame = FramesFactory.getEME2000()
+
+        # Primary
+        tle_p = TLE(primary_data["TLE_LINE1"], primary_data["TLE_LINE2"])
+        prop_p = TLEPropagator.selectExtrapolator(tle_p)
+        pv_p = prop_p.getPVCoordinates(final_tca_date, inertialFrame)
+
+        p_pos = pv_p.getPosition()
+        p_vel = pv_p.getVelocity()
+
+        # Secondary
+        tle_s = TLE(secondary["TLE_LINE1"], secondary["TLE_LINE2"])
+        prop_s = TLEPropagator.selectExtrapolator(tle_s)
+        pv_s = prop_s.getPVCoordinates(final_tca_date, inertialFrame)
+
+        s_pos = pv_s.getPosition()
+        s_vel = pv_s.getVelocity()
+
+        # Construct full state tuples for analysis
+        # (Date, PosArray, VelArray, CovArray)
+        # TLE doesn't provide covariance natively here, will use default in analysis
+        import numpy as np
+
+        p_pos_arr = np.array([p_pos.getX(), p_pos.getY(), p_pos.getZ()])
+        p_vel_arr = np.array([p_vel.getX(), p_vel.getY(), p_vel.getZ()])
+
+        s_pos_arr = np.array([s_pos.getX(), s_pos.getY(), s_pos.getZ()])
+        s_vel_arr = np.array([s_vel.getX(), s_vel.getY(), s_vel.getZ()])
+
+        p_state_full = (final_tca_date, p_pos_arr, p_vel_arr, None)
+        s_state_full = (final_tca_date, s_pos_arr, s_vel_arr, None)
+
         # Analyze with full precision and stricter bounds
         analysis_result = conjunctionAnalysis(
             primary=primary_data,
             secondary=secondary,
             tcaTime=final_tca_date,
             verbose=False,
-            ellipsoid_bounds=tuple(args.ellipsoid)
+            ellipsoid_bounds=tuple(args.ellipsoid),
+            primary_state_vector=p_state_full,
+            secondary_state_vector=s_state_full
         )
 
         if analysis_result['is_violated']:
             # Remove helper key before saving to final list
             del analysis_result['is_violated']
+
+            analysis_result['primary_state_vector'] = {
+                'position': p_pos_arr.tolist(),
+                'velocity': p_vel_arr.tolist()
+            }
+            analysis_result['secondary_state_vector'] = {
+                'position': s_pos_arr.tolist(),
+                'velocity': s_vel_arr.tolist()
+            }
+
             results.append(analysis_result)
 
         if i % 10 == 0:
