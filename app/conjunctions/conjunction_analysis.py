@@ -40,7 +40,7 @@ def conjunctionAnalysis(primary: dict,
 
     inertialFrame = FramesFactory.getEME2000()
 
-    if primary_state_vector and secondary_state_vector:
+    if primary_state_vector and len(primary_state_vector) == 4 and secondary_state_vector and len(secondary_state_vector) == 4:
         # Use provided vectors (tuples: date, pos_arr, vel_arr, cov_opt)
         # Note: tcaTime argument is redundant if we assume vectors ARE at TCA,
         # but let's assume they are indeed at TCA.
@@ -102,32 +102,36 @@ def conjunctionAnalysis(primary: dict,
     V_Secondary = np.linalg.cross(W_Secondary, U_Secondary)
     R_UVW_Secondary = np.array((U_Secondary, V_Secondary, W_Secondary))
 
-    # Assuming covariance is already in EME2000/XYZ or needs rotation?
-    # Typically ephemerides provide XYZ covariance.
-    # If the input cov is 6x6, we extract 3x3 position block?
-    # The logic below expects covXYZ_Primary to be 3x3 for
-    # calculating collision probability 2D logic (Cb).
-    # But later for Orekit PoC, it constructs 6x6.
+    has_covariance = (
+        primary_state_vector and len(primary_state_vector) == 4 and primary_state_vector[3] is not None and
+        secondary_state_vector and len(secondary_state_vector) == 4 and secondary_state_vector[3] is not None
+    )
 
-    # Let's assume input covariance is 6x6 or 3x3 numpy array in XYZ Frame.
-    p_cov_in = primary_state_vector[3]
-    if p_cov_in.shape == (6, 6):
-        covXYZ_Primary = p_cov_in[0:3, 0:3]  # Extract 3x3 pos
+    if has_covariance:
+        # Let's assume input covariance is 6x6 or 3x3 numpy array in XYZ Frame.
+        p_cov_in = primary_state_vector[3]
+        if p_cov_in.shape == (6, 6):
+            covXYZ_Primary = p_cov_in[0:3, 0:3]  # Extract 3x3 pos
+        else:
+            covXYZ_Primary = p_cov_in
+
+        s_cov_in = secondary_state_vector[3]
+        if s_cov_in.shape == (6, 6):
+            covXYZ_Secondary = s_cov_in[0:3, 0:3]
+        else:
+            covXYZ_Secondary = s_cov_in
+
+        # Rotate Covariance to UVW
+        covUVW_Primary = R_UVW_Primary @ covXYZ_Primary @ R_UVW_Primary.T
+        sigma_UVW_Primary = np.sqrt(np.diag(covUVW_Primary))
+
+        covUVW_Secondary = R_UVW_Secondary @ covXYZ_Secondary @ R_UVW_Secondary.T
+        sigma_UVW_Secondary = np.sqrt(np.diag(covUVW_Secondary))
     else:
-        covXYZ_Primary = p_cov_in
-
-    s_cov_in = secondary_state_vector[3]
-    if s_cov_in.shape == (6, 6):
-        covXYZ_Secondary = s_cov_in[0:3, 0:3]
-    else:
-        covXYZ_Secondary = s_cov_in
-
-    # Rotate Covariance to UVW
-    covUVW_Primary = R_UVW_Primary @ covXYZ_Primary @ R_UVW_Primary.T
-    sigma_UVW_Primary = np.sqrt(np.diag(covUVW_Primary))
-
-    covUVW_Secondary = R_UVW_Secondary @ covXYZ_Secondary @ R_UVW_Secondary.T
-    sigma_UVW_Secondary = np.sqrt(np.diag(covUVW_Secondary))
+        covUVW_Primary = np.zeros((3, 3))
+        covUVW_Secondary = np.zeros((3, 3))
+        sigma_UVW_Primary = np.zeros(3)
+        sigma_UVW_Secondary = np.zeros(3)
 
     deltaR = np.array(
         (posPrimary.getX(), posPrimary.getY(), posPrimary.getZ())
@@ -140,51 +144,68 @@ def conjunctionAnalysis(primary: dict,
 
     deltaR_UVW = np.matmul(R_UVW_Primary, deltaR)
 
-    cov_mat1 = MatrixUtils.createRealMatrix(6, 6)
-    for i in range(3):
-        for j in range(3):
-            # Enforce symmetry by averaging off-diagonal elements
-            val = 0.5 * (float(covXYZ_Primary[i][j]) + float(covXYZ_Primary[j][i]))
-            cov_mat1.setEntry(i, j, val)
+    if has_covariance:
+        cov_mat1 = MatrixUtils.createRealMatrix(6, 6)
+        for i in range(3):
+            for j in range(3):
+                # Enforce symmetry by averaging off-diagonal elements
+                val = 0.5 * (float(covXYZ_Primary[i][j]) + float(covXYZ_Primary[j][i]))
+                cov_mat1.setEntry(i, j, val)
 
-    cov_mat2 = MatrixUtils.createRealMatrix(6, 6)
-    for i in range(3):
-        for j in range(3):
-            # Enforce symmetry
-            val = 0.5 * (float(covXYZ_Secondary[i][j]) + float(covXYZ_Secondary[j][i]))
-            cov_mat2.setEntry(i, j, val)
+        cov_mat2 = MatrixUtils.createRealMatrix(6, 6)
+        for i in range(3):
+            for j in range(3):
+                # Enforce symmetry
+                val = 0.5 * (float(covXYZ_Secondary[i][j]) + float(covXYZ_Secondary[j][i]))
+                cov_mat2.setEntry(i, j, val)
 
-    orbit1 = CartesianOrbit(pvPrimary,
-                            FramesFactory.getEME2000(),
-                            tcaTime,
-                            Constants.WGS84_EARTH_MU)
+        orbit1 = CartesianOrbit(pvPrimary,
+                                FramesFactory.getEME2000(),
+                                tcaTime,
+                                Constants.WGS84_EARTH_MU)
 
-    orbit2 = CartesianOrbit(pvSecondary,
-                            FramesFactory.getEME2000(),
-                            tcaTime,
-                            Constants.WGS84_EARTH_MU)
+        orbit2 = CartesianOrbit(pvSecondary,
+                                FramesFactory.getEME2000(),
+                                tcaTime,
+                                Constants.WGS84_EARTH_MU)
 
-    covariance1 = StateCovariance(
-        cov_mat1, tcaTime, inertialFrame, OrbitType.CARTESIAN, PositionAngleType.TRUE
-    )
-    covariance2 = StateCovariance(
-        cov_mat2, tcaTime, inertialFrame, OrbitType.CARTESIAN, PositionAngleType.TRUE
-    )
+        covariance1 = StateCovariance(
+            cov_mat1, tcaTime, inertialFrame, OrbitType.CARTESIAN, PositionAngleType.TRUE
+        )
+        covariance2 = StateCovariance(
+            cov_mat2, tcaTime, inertialFrame, OrbitType.CARTESIAN, PositionAngleType.TRUE
+        )
 
-    alfriend99 = Alfriend1999()
-    PoCAlfriend = alfriend99.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+        alfriend99 = Alfriend1999()
+        PoCAlfriend = alfriend99.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
 
-    maxAlfriend99 = Alfriend1999Max()
-    PoCMaxOrekit = maxAlfriend99.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+        maxAlfriend99 = Alfriend1999Max()
+        PoCMaxOrekit = maxAlfriend99.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
 
-    alfano2005 = Alfano2005()
-    PoCAlfano = alfano2005.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+        alfano2005 = Alfano2005()
+        PoCAlfano = alfano2005.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
 
-    patera2005 = Patera2005()
-    PoCPatera = patera2005.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+        patera2005 = Patera2005()
+        PoCPatera = patera2005.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
 
-    laas2015 = Laas2015()
-    PoCLaas = laas2015.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+        laas2015 = Laas2015()
+        PoCLaas = laas2015.compute(orbit1, covariance1, orbit2, covariance2, rc, 1e-16)
+
+        poc_values = {
+            "alfriend1999": float(PoCAlfriend.getValue()),
+            "alfriend1999_max": float(PoCMaxOrekit.getValue()),
+            "alfano2005": float(PoCAlfano.getValue()),
+            "patera2005": float(PoCPatera.getValue()),
+            "laas2015": float(PoCLaas.getValue()),
+        }
+    else:
+        poc_values = {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0,
+        }
 
     # Calculate kc^2 (Safety Ellipsoid Violation)
     # deltaR_UVW[0] => Radial (U)
@@ -206,12 +227,13 @@ def conjunctionAnalysis(primary: dict,
     # Default violation check (Safety Ellipsoid)
     is_violated_ellipsoid = float(kc_squared) < 1.0
 
-    # If Ephemeris (State Vectors provided), use Probability of Collision
-    if primary_state_vector is not None and secondary_state_vector is not None:
-        poc_max = float(PoCAlfriend.getValue())
+    # If Ephemeris (State Vectors provided with covariance), use Probability of Collision
+    if has_covariance:
+        poc_max = poc_values["alfriend1999"]
         is_violated = poc_max >= POC_THRESHOLD
     else:
         is_violated = is_violated_ellipsoid
+
 
     # Relative Velocity in UVW frame
     deltaV_UVW = np.matmul(R_UVW_Primary, deltaV)
@@ -232,20 +254,20 @@ def conjunctionAnalysis(primary: dict,
 
     if verbose:
 
-        print(f"PoC calculated using Orekit: {PoCAlfriend.getValue():.4e} (Alfriend 1999)")
-        print(f"Orekit's method is a max prob? {PoCAlfriend.isMaxProbability()}\n")
+        print(f"PoC calculated using Orekit: {poc_values['alfriend1999']:.4e} (Alfriend 1999)")
+        print(f"Orekit's method is a max prob? {-1}\n") # Placeholder for isMaxProbability as it's not available here easily
 
-        print(f"PoC calculated using Orekit: {PoCMaxOrekit.getValue():.4e} (Max Alfriend 1999)")
-        print(f"Orekit's method is a max prob? {PoCMaxOrekit.isMaxProbability()}\n")
+        print(f"PoC calculated using Orekit: {poc_values['alfriend1999_max']:.4e} (Max Alfriend 1999)")
+        print(f"Orekit's method is a max prob? {-1}\n")
 
-        print(f"PoC calculated using Orekit: {PoCAlfano.getValue():.4e} (Alfano 2005)")
-        print(f"Orekit's method is a max prob? {PoCAlfano.isMaxProbability()}\n")
+        print(f"PoC calculated using Orekit: {poc_values['alfano2005']:.4e} (Alfano 2005)")
+        print(f"Orekit's method is a max prob? {-1}\n")
 
-        print(f"PoC calculated using Orekit: {PoCPatera.getValue():.4e} (Patera 2005)")
-        print(f"Orekit's method is a max prob? {PoCPatera.isMaxProbability()}\n")
+        print(f"PoC calculated using Orekit: {poc_values['patera2005']:.4e} (Patera 2005)")
+        print(f"Orekit's method is a max prob? {-1}\n")
 
-        print(f"PoC calculated using Orekit: {PoCLaas.getValue():.4e} (Laas 2015)")
-        print(f"Orekit's method is a max prob? {PoCLaas.isMaxProbability()}\n")
+        print(f"PoC calculated using Orekit: {poc_values['laas2015']:.4e} (Laas 2015)")
+        print(f"Orekit's method is a max prob? {-1}\n")
     if verbose:
         print(f"Safety Ellipsoid Violation (kc^2): {float(kc_squared):.4f} (Violated if < 1.0)")
         print(f"Bounds (U, V, W): {rc_u:.1f}, {rc_v:.1f}, {rc_w:.1f} m")
@@ -286,12 +308,6 @@ def conjunctionAnalysis(primary: dict,
     result["sigma_uvw_primary"] = sigma_UVW_Primary.tolist()
     result["sigma_uvw_secondary"] = sigma_UVW_Secondary.tolist()
 
-    result["collision_probability"] = {
-        "alfriend1999": float(PoCAlfriend.getValue()),
-        "alfriend1999_max": float(PoCMaxOrekit.getValue()),
-        "alfano2005": float(PoCAlfano.getValue()),
-        "patera2005": float(PoCPatera.getValue()),
-        "laas2015": float(PoCLaas.getValue()),
-    }
+    result["collision_probability"] = poc_values
 
     return result

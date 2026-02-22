@@ -30,11 +30,11 @@ def main():
         description="Screening inicial de conjunções (10x Elipsoide)."
     )
     parser.add_argument('--base', type=int, default=47699, help="NORAD ID do satélite base")
-    parser.add_argument('--days', type=float, default=7.0, help="Dias de simulação")
+    parser.add_argument('--days', type=float, default=5.0, help="Dias de simulação")
     parser.add_argument(
         '--start-date',
         type=str,
-        help="Data de início (ISO: YYYY-MM-DDTHH:MM:SS) [Default: 2026-02-11 12:00:00 UTC]"
+        help="Data de início (ISO: YYYY-MM-DDTHH:MM:SS) [Default: 2026-02-19 12:00:00 UTC]"
     )
 
     args = parser.parse_args()
@@ -58,7 +58,7 @@ def main():
     # 2. Fallback to Fixed Default
     if not start_date:
         from datetime import datetime, timezone
-        start_date = datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc)
+        start_date = datetime(2026, 2, 19, 12, 0, 0, tzinfo=timezone.utc)
         logger.info(f"Data de início padrão aplicada: {start_date}")
 
     logger.info("Baixando catálogo de TLEs...")

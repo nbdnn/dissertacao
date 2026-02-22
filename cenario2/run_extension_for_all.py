@@ -19,8 +19,8 @@ def main():
 
     # Args
     parser = argparse.ArgumentParser()
-    parser.add_argument('--start-date', type=str, default="2026-02-11T12:00:00",
-                        help="Analysis Start Date (UTC) ISO Format. Default: 2026-02-11T12:00:00")
+    parser.add_argument('--start-date', type=str, default="2026-02-19T12:00:00",
+                        help="Analysis Start Date (UTC) ISO Format. Default: 2026-02-19T12:00:00")
     args = parser.parse_args()
 
     setup_orekit()

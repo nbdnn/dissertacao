@@ -134,14 +134,18 @@ def download_and_extend_ephemeris(base_id, candidates, days_sim, start_date_dt):
 
         sb_id = get_spacebook_id(norad_id, catalog)
         if not sb_id:
-            logger.warning(f"ID {norad_id} not found in catalog. Skipping.")
-            raise Exception(f"ID {norad_id} not found in catalog.")
+            # print("")  # Newline to break progress bar output
+            logger.warning(f"\nID {norad_id} not found in catalog. Skipping.")
+            continue
 
         url = f"https://spacebook.com/api/entity/synthetic-covariance/{sb_id}"
-        file_path = download_ephemeris(url, norad_id, data_dir)
-
-        if file_path:
-            downloaded_files.append((norad_id, file_path))
+        try:
+            file_path = download_ephemeris(url, norad_id, data_dir)
+            if file_path:
+                downloaded_files.append((norad_id, file_path))
+        except Exception as e:
+            logger.warning(f"\nFailed to download ephemeris for {norad_id}: {e}. Skipping.")
+            continue
 
     print("")
 
@@ -171,7 +175,7 @@ def download_and_extend_ephemeris(base_id, candidates, days_sim, start_date_dt):
             # Newline to separate error from progress bar
             print("")
             logger.error(f"Failed to extend {norad_id}: {e}")
-            raise e
+            continue
 
     print("")
 
@@ -239,7 +243,7 @@ def main():
     parser.add_argument(
         '--start-date',
         type=str,
-        help="ISO format. Default: 2026-02-11T12:00:00+00:00"
+        help="ISO format. Default: 2026-02-19T12:00:00+00:00"
     )
     args = parser.parse_args()
 
@@ -247,8 +251,8 @@ def main():
     if args.start_date:
         start_dt = datetime.fromisoformat(args.start_date)
     else:
-        # Default start: 2026-02-11 12:00 UTC
-        start_dt = datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc)
+        # Default start: 2026-02-19 12:00 UTC
+        start_dt = datetime(2026, 2, 19, 12, 0, 0, tzinfo=timezone.utc)
 
     logger.info(f"Simulation Start: {start_dt}")
 

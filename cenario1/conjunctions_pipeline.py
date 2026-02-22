@@ -269,14 +269,12 @@ def main():
             # Remove helper key before saving to final list
             del analysis_result['is_violated']
 
-            analysis_result['primary_state_vector'] = {
-                'position': p_pos_arr.tolist(),
-                'velocity': p_vel_arr.tolist()
-            }
-            analysis_result['secondary_state_vector'] = {
-                'position': s_pos_arr.tolist(),
-                'velocity': s_vel_arr.tolist()
-            }
+            # Remove covariance, sigma and collision_probability for Cenario 1
+            analysis_result.pop('covariance_matrix_uvw_primary', None)
+            analysis_result.pop('covariance_matrix_uvw_secondary', None)
+            analysis_result.pop('sigma_uvw_primary', None)
+            analysis_result.pop('sigma_uvw_secondary', None)
+            analysis_result.pop('collision_probability', None)
 
             results.append(analysis_result)
 

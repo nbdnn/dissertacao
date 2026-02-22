@@ -412,6 +412,8 @@ def sieveAlgorithm(
                             p_state_res, s_state_res = None, None
 
                             # Re-eval logic to match TCA choice
+                            tca_time_shifted = initialTime.shiftedBy(t[i] + tca)
+
                             if distances[-1] < distances[-2]:
                                 # Use last point
                                 p_state_res, s_state_res = bisection_states[-1]
@@ -419,10 +421,17 @@ def sieveAlgorithm(
                                 # Use second to last
                                 p_state_res, s_state_res = bisection_states[-2]
 
+                            # Get full state vector for ephemeris mode to avoid TLE fallback crash
+                            if use_ephem_primary and primary_data_raw:
+                                p_state_res = interpolate_ephemeris_at_dates(primary_data_raw, [tca_time_shifted])[0]
+
+                            if use_ephem_secondary and secondary_data_raw:
+                                s_state_res = interpolate_ephemeris_at_dates(secondary_data_raw, [tca_time_shifted])[0]
+
                             result = conjunctionAnalysis(
                                 primary=primary,
                                 secondary=secondary,
-                                tcaTime=initialTime.shiftedBy(t[i] + tca),
+                                tcaTime=tca_time_shifted,
                                 verbose=verboseConjAnalysis,
                                 ellipsoid_bounds=ellipsoid_bounds,
                                 primary_state_vector=p_state_res,
