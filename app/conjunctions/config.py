@@ -4,6 +4,9 @@
 # Radial, In-Track, Cross-Track
 ELLIPSOID_BOUNDS = (2000.0, 5000.0, 2000.0)
 
+# Safer bounds strictly used by PyMoo GA during Virtual TLE verification
+GA_ELLIPSOID_BOUNDS = (5000.0, 20000.0, 5000.0)
+
 # Multiplier for the screening sieve (coarse filter)
 # The screening ellipsoid will be SCREENING_MULTIPLIER * ELLIPSOID_BOUNDS
 SCREENING_MULTIPLIER = 10.0
