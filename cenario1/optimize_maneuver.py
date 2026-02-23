@@ -14,8 +14,8 @@ from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 
-# Configuração do Satélite Primário
-PRIMARY_ID = 65774  # Altere este ID para o satélite que deseja otimizar
+# Configuração da Otimização em Lote
+PRIMARY_IDS_BATCH = [61046, 64830, 65774]  # Satélites que serão rodados sequencialmente
 
 # Setup paths to ensure we can import 'app'
 file_path = os.path.abspath(__file__)
@@ -125,7 +125,7 @@ def apply_gauss_variational_equations(a: float, e: float, i: float, raan: float,
         
     return a + da, max(0.0, e + de), i + di, raan + draan, arg_p + darg_p, f
 
-def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_date, virtual_p_tle1=None, virtual_p_tle2=None):
+def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_date, primary_id, virtual_p_tle1=None, virtual_p_tle2=None, detailed=False):
     """ 
     Filtro de causalidade e avaliação de screening.
     Retorna uma lista contendo o sec_id e o respectivo kc^2 de cada encontro avaliado.
@@ -205,45 +205,69 @@ def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_dat
                 "NORAD_CAT_ID": cand.sec_id
             }
             
-            # Check usando a funcao real
-            kc2 = float('inf')  # Inicializa como seguro
-            ca_dict = {
-                "primary_id": PRIMARY_ID,
-                "secondary_id": cand.sec_id,
-                "tca_utc": new_tca_date.toString(),
-                "min_distance_m": min_dist,
-                "kc_squared": kc2,
-                "primary_tle_line1": p_line1_for_ca,
-                "primary_tle_line2": p_line2_for_ca,
-                "secondary_tle_line1": cand.s_tle1,
-                "secondary_tle_line2": cand.s_tle2
-            }
-            try:
-                # O ellipsoid_bounds padrão da config do projeto é 20, 20, 20. Usa-se (20,20,20)
-                # Para maior seguranca no GA, usamos o GA_ELLIPSOID_BOUNDS (5000, 20000, 5000)
-                analysis_result = conjunctionAnalysis(
-                    primary=primary_data,
-                    secondary=secondary_data,
-                    tcaTime=new_tca_date,
-                    verbose=False,
-                    ellipsoid_bounds=GA_ELLIPSOID_BOUNDS,
-                    primary_state_vector=p_state_full,
-                    secondary_state_vector=s_state_full
-                )
-                if 'kc_squared' in analysis_result:
-                    ca_dict.update(analysis_result)
-                    kc2 = analysis_result['kc_squared']
-                elif min_dist < 20.0:
-                    kc2 = 0.0 # Aproximacao ruim para colisão pura sem kc2
-                    ca_dict["kc_squared"] = 0.0
-            except Exception as e:
-                # Fallback on distance threshold Se falhar por causa da covariance nula
-                logger.warning(f"Falha ao avaliar kc2 do SEC_{cand.sec_id}: {repr(e)}")
-                if min_dist < 20.0:
-                    kc2 = 0.0
-                    ca_dict["kc_squared"] = 0.0
-                    
-            evaluated_conjunctions.append(ca_dict)
+            if detailed:
+                kc2 = float('inf')  # Inicializa como seguro
+                ca_dict = {
+                    "primary_id": primary_id,
+                    "secondary_id": cand.sec_id,
+                    "tca_utc": new_tca_date.toString(),
+                    "min_distance_m": min_dist,
+                    "kc_squared": kc2,
+                    "primary_tle_line1": p_line1_for_ca,
+                    "primary_tle_line2": p_line2_for_ca,
+                    "secondary_tle_line1": cand.s_tle1,
+                    "secondary_tle_line2": cand.s_tle2
+                }
+                try:
+                    analysis_result = conjunctionAnalysis(
+                        primary=primary_data,
+                        secondary=secondary_data,
+                        tcaTime=new_tca_date,
+                        verbose=False,
+                        ellipsoid_bounds=GA_ELLIPSOID_BOUNDS,
+                        primary_state_vector=p_state_full,
+                        secondary_state_vector=s_state_full
+                    )
+                    if 'kc_squared' in analysis_result:
+                        ca_dict.update(analysis_result)
+                        kc2 = analysis_result['kc_squared']
+                    elif min_dist < 20.0:
+                        kc2 = 0.0 # Aproximacao ruim para colisão pura sem kc2
+                        ca_dict["kc_squared"] = 0.0
+                except Exception as e:
+                    logger.warning(f"Falha ao avaliar kc2 do SEC_{cand.sec_id}: {repr(e)}")
+                    if min_dist < 20.0:
+                        kc2 = 0.0
+                        ca_dict["kc_squared"] = 0.0
+                        
+                evaluated_conjunctions.append(ca_dict)
+            else:
+                kc2 = float('inf')
+                try:
+                    analysis_result = conjunctionAnalysis(
+                        primary=primary_data,
+                        secondary=secondary_data,
+                        tcaTime=new_tca_date,
+                        verbose=False,
+                        ellipsoid_bounds=GA_ELLIPSOID_BOUNDS,
+                        primary_state_vector=p_state_full,
+                        secondary_state_vector=s_state_full
+                    )
+                    if 'kc_squared' in analysis_result:
+                        kc2 = analysis_result['kc_squared']
+                    elif min_dist < 20.0:
+                        kc2 = 0.0
+                except Exception as e:
+                    logger.warning(f"Falha ao avaliar kc2 do SEC_{cand.sec_id}: {repr(e)}")
+                    if min_dist < 20.0:
+                        kc2 = 0.0
+                
+                evaluated_conjunctions.append({
+                    "sec_id": cand.sec_id,
+                    "tca_utc": new_tca_date.toString(),
+                    "min_dist_m": min_dist,
+                    "kc_squared": kc2
+                })
 
     return evaluated_conjunctions
 
@@ -260,7 +284,7 @@ def get_executor():
     return _global_executor
 
 def _evaluate_single_member_worker(args):
-    x, t_tca_str, candidates, current_seed = args
+    x, t_tca_str, candidates, current_seed, primary_id = args
     import jpype
     if not jpype.isThreadAttachedToJVM():
         jpype.attachThreadToJVM()
@@ -308,7 +332,7 @@ def _evaluate_single_member_worker(args):
         vp_line2 = virtual_tle.getLine2()
         
         evaluated_conjunctions = evaluate_trajectory_screening(
-            virtual_propagator, candidates, t_maneuver_date, 
+            virtual_propagator, candidates, t_maneuver_date, primary_id,
             virtual_p_tle1=vp_line1, virtual_p_tle2=vp_line2
         )
         
@@ -327,10 +351,65 @@ def _evaluate_single_member_worker(args):
     print(f"\r[Seed {current_seed}] dt_maneuver: {dt_maneuver/3600.0:.2f}h | delta_V: {delta_v:.4f} m/s      ", end="", flush=True)
     return ret_F, ret_G, ret_kc_list
 
+def compute_detailed_metrics_for_best_solution(dt_maneuver, delta_v, t_tca_str, candidates, primary_id):
+    import jpype
+    if not jpype.isThreadAttachedToJVM():
+        jpype.attachThreadToJVM()
+        
+    utc = TimeScalesFactory.getUTC()
+    inertialFrame = FramesFactory.getEME2000()
+    
+    t_tca_date = AbsoluteDate(t_tca_str, utc)
+    t_maneuver_date = t_tca_date.shiftedBy(float(dt_maneuver))
+    
+    p_tle1 = candidates[0].p_tle1
+    p_tle2 = candidates[0].p_tle2
+    
+    tle_p = TLE(p_tle1, p_tle2)
+    prop_p_orig = TLEPropagator.selectExtrapolator(tle_p)
+    
+    try:
+        pv_maneuver = prop_p_orig.getPVCoordinates(t_maneuver_date, inertialFrame)
+        keplerian_orbit = KeplerianOrbit(pv_maneuver, inertialFrame, t_maneuver_date, Constants.WGS84_EARTH_MU)
+        
+        a = keplerian_orbit.getA() / 1000.0  
+        e = keplerian_orbit.getE()
+        i = keplerian_orbit.getI()
+        raan = keplerian_orbit.getRightAscensionOfAscendingNode()
+        arg_p = keplerian_orbit.getPerigeeArgument()
+        f = keplerian_orbit.getTrueAnomaly()
+        
+        new_a, new_e, new_i, new_raan, new_arg_p, new_f = apply_gauss_variational_equations(
+            a, e, i, raan, arg_p, f, delta_v
+        )
+        
+        virtual_orbit = KeplerianOrbit(
+            new_a * 1000.0, new_e, new_i, new_arg_p, new_raan, new_f,
+            PositionAngleType.TRUE, inertialFrame, t_maneuver_date, Constants.WGS84_EARTH_MU
+        )
+        virtual_state = SpacecraftState(virtual_orbit)
+        converter = FixedPointConverter()
+        virtual_tle = TLE.stateToTLE(virtual_state, tle_p, converter)
+        virtual_propagator = TLEPropagator.selectExtrapolator(virtual_tle)
+        
+        vp_line1 = virtual_tle.getLine1()
+        vp_line2 = virtual_tle.getLine2()
+        
+        evaluated_conjunctions = evaluate_trajectory_screening(
+            virtual_propagator, candidates, t_maneuver_date, primary_id,
+            virtual_p_tle1=vp_line1, virtual_p_tle2=vp_line2, detailed=True
+        )
+        return evaluated_conjunctions
+        
+    except Exception as e:
+        logger.error(f"Erro na propagação da manobra virtual na Geração Final Detailed: {e}")
+        return []
+
 class CollisionAvoidanceOptimization(Problem):
-    def __init__(self, t_tca_str: str, candidates):
+    def __init__(self, t_tca_str: str, candidates, primary_id: int):
         self.t_tca_str = t_tca_str
         self.candidates = candidates
+        self.primary_id = primary_id
         
         # Limites das variaveis:
         # x_0: t_maneuver em segundos relativos a t_tca_date 
@@ -347,7 +426,7 @@ class CollisionAvoidanceOptimization(Problem):
     def _evaluate(self, X, out, *args, **kwargs):
         X = np.atleast_2d(X)
         current_seed = getattr(self, "current_seed", "TEST")
-        worker_args = [(X[i], self.t_tca_str, self.candidates, current_seed) for i in range(len(X))]
+        worker_args = [(X[i], self.t_tca_str, self.candidates, current_seed, self.primary_id) for i in range(len(X))]
         
         executor = get_executor()
         results = list(executor.map(_evaluate_single_member_worker, worker_args))
@@ -356,33 +435,29 @@ class CollisionAvoidanceOptimization(Problem):
         out["G"] = np.column_stack([res[1] for res in results])
         out["kc2_list"] = [res[2] for res in results]
 
-def run_test():
+def run_test(primary_id):
     """Função para extrair logs e instanciar o setup de screening."""
     import glob
     # Busca apenas screenings do primary_id configurado
-    pattern = os.path.join(project_root, "screenings", f"screening_{PRIMARY_ID}_*.json")
+    pattern = os.path.join(project_root, "screenings", f"screening_{primary_id}_*.json")
     files = glob.glob(pattern)
     
     if not files:
-        logger.error(f"Nenhum arquivo de screening encontrado para o PRIMARY_ID {PRIMARY_ID} em {pattern}")
-        # Tenta buscar qualquer screening se o específico não existir, para não travar o script?
-        # Ou melhor travar para garantir que o usuário saiba que não achou o alvo correto.
-        logger.info("Dica: Verifique se o arquivo screenings/screening_{PRIMARY_ID}_*.json existe.")
-        sys.exit(1)
+        logger.error(f"Nenhum arquivo de screening encontrado para o satélite {primary_id} em {pattern}")
+        logger.info(f"Dica: Verifique se o arquivo screenings/screening_{primary_id}_*.json existe.")
+        return None
         
     # Seleciona o mais recente com base no tempo de modificação
     latest_file = max(files, key=os.path.getmtime)
-    logger.info(f"Otimizando PRIMARY_ID {PRIMARY_ID} usando o screening mais recente: {latest_file}")
-    print(f"Otimizando PRIMARY_ID {PRIMARY_ID} usando o screening mais recente: {latest_file}")
-    
-    primary_id = PRIMARY_ID
+    logger.info(f"Otimizando PRIMARY_ID {primary_id} usando o screening mais recente: {latest_file}")
+    print(f"Otimizando PRIMARY_ID {primary_id} usando o screening mais recente: {latest_file}")
     
     # 1. Extração
     t_tca_str, candidates = load_screening_results(latest_file, primary_id)
     logger.info(f"Primeiro TCA encontrado: {t_tca_str} (Total candidates c/ TLE: {len(candidates)})")
     
     # 2. Avaliação simulada de uma partícula
-    problem = CollisionAvoidanceOptimization(t_tca_str, candidates)
+    problem = CollisionAvoidanceOptimization(t_tca_str, candidates, primary_id)
     
     # Test point: Maneuver 1.5 days before TCA, deltaV = 0.1 m/s
     dt_maneuver_test = -1.5 * 24 * 3600.0
@@ -397,113 +472,121 @@ def run_test():
     return problem
 
 def run_optimization_campaign():
-    problem = run_test()
-    
-    num_seeds = 10
-    all_histories = []
-    
-    logger.info(f"Iniciando campanha de otimização pymoo ...")
-    
-    valid_solutions = []
-    
-    for seed in range(1, num_seeds + 1):
-        problem.current_seed = seed
-        algorithm = GA(pop_size=100, eliminate_duplicates=True)
-        termination = get_termination("n_gen", 60)
+    for primary_id in PRIMARY_IDS_BATCH:
+        print(f"==========================================================================")
+        print(f"  INICIANDO LOTE (BATCH) DE OTIMIZAÇÃO PARA O SATÉLITE: {primary_id}   ")
+        print(f"==========================================================================")
         
-        logger.info(f"========== INICIANDO OTIMIZAÇÃO - SEED: {seed}/{num_seeds} ==========")
-        res = minimize(problem,
-                       algorithm,
-                       termination,
-                       seed=seed,
-                       save_history=True,
-                       verbose=True)
-        all_histories.append((seed, res))
-        
-        if res.F is not None:
-            # Recupera a lista kc2 do ótimo (res.X)
-            # Como salvamos em out["kc2_list"], nós precisamos reavaliar o ótimo? 
-            # pymoo res.opt[0] deve conter os valores customizados no algoritmo em si se setados, caso contrário
-            # fazemos uma avaliação extra simples:
-            x_best = res.X
-            out_best = {}
-            problem._evaluate(x_best, out_best)
-            best_kc2_list = out_best.get("kc2_list", [[]])[0]
-            
-            # Ordenar por kc_squared e min_distance_m
-            sorted_conjunctions = sorted(
-                best_kc2_list, 
-                key=lambda x: (x.get("kc_squared", float('inf')), x.get("min_distance_m", float('inf')))
-            )
-            top5_threats = sorted_conjunctions[:5]
-            
-            logger.info(f"   Melhor solucao Seed {seed}: dt_Maneuver={res.X[0]:.2f}s, dV={res.X[1]:.4f} m/s | Obj={res.F[0]:.4f} | Constr={res.G[0]}")
-            valid_solutions.append({
-                "seed": seed,
-                "dt_maneuver_s": res.X[0],
-                "delta_v_ms": res.X[1],
-                "objective_dv": res.F[0],
-                "constraint_violations": res.G[0],
-                "conjunctions_status": best_kc2_list
-            })
-            
-            # Salvar top 5 threats em arquivo separado
-            top5_file = os.path.join(project_root, "cenario1", f"{PRIMARY_ID}_seed_{seed}_top5_threats.json")
-            with open(top5_file, "w") as f:
-                json.dump(top5_threats, f, indent=4)
-            
-            # Salvar por seed imediamente para backup
-            seed_file = os.path.join(project_root, "cenario1", f"{PRIMARY_ID}_seed_{seed}_solution.json")
-            with open(seed_file, "w") as f:
-                json.dump(valid_solutions[-1], f, indent=4)
-                
-        else:
-            logger.info(f"   Nenhuma solução válida encontrada no Seed {seed}")
-
-    # Salvar soluções em JSON
-    solutions_file = os.path.join(project_root, "cenario1", f"{PRIMARY_ID}_optimization_solutions_{int(time.time())}.json")
-    with open(solutions_file, "w") as f:
-        json.dump(valid_solutions, f, indent=4)
-    logger.info(f"Soluções salvas em {solutions_file}")
-
-    # Plotar Curvas de Convergência
-    plt.figure(figsize=(10, 6))
-    
-    for seed, res in all_histories:
-        if res.history is None:
+        problem = run_test(primary_id)
+        if problem is None:
+            logger.warning(f"Pulando {primary_id} pois não foi possível carregar o problem.")
             continue
-            
-        n_evals = []
-        opt = []
         
-        generations = len(res.history)
-        for gen in range(generations):
-            algo_snapshot = res.history[gen]
+        num_seeds = 5
+        all_histories = []
+        
+        logger.info(f"Iniciando campanha de otimização pymoo ...")
+        
+        valid_solutions = []
+        
+        for seed in range(1, num_seeds + 1):
+            problem.current_seed = seed
+            algorithm = GA(pop_size=100, eliminate_duplicates=True)
+            termination = get_termination("n_gen", 40)
             
-            pop = algo_snapshot.pop
-            feas = (pop.get("CV") <= 0.0).flatten()
+            logger.info(f"========== INICIANDO OTIMIZAÇÃO - SEED: {seed}/{num_seeds} ==========")
+            res = minimize(problem,
+                           algorithm,
+                           termination,
+                           seed=seed,
+                           save_history=True,
+                           verbose=True)
+            all_histories.append((seed, res))
             
-            if np.any(feas):
-                best_valid_f = pop[feas].get("F").min()
-                opt.append(best_valid_f)
-            else:
-                if len(opt) > 0:
-                    opt.append(opt[-1])
-                else:
-                    opt.append(np.nan)
+            if res.F is not None:
+                x_best = res.X
+                out_best = {}
+                problem._evaluate(x_best, out_best)
+                best_kc2_list = out_best.get("kc2_list", [[]])[0]
+                
+                detailed_list = compute_detailed_metrics_for_best_solution(
+                    x_best[0], x_best[1], problem.t_tca_str, problem.candidates, primary_id
+                )
+                
+                # Ordenar por kc_squared e min_distance_m
+                sorted_conjunctions = sorted(
+                    detailed_list, 
+                    key=lambda x: (x.get("kc_squared", float('inf')), x.get("min_distance_m", float('inf')))
+                )
+                top5_threats = sorted_conjunctions[:5]
+                
+                logger.info(f"   Melhor solucao Seed {seed}: dt_Maneuver={res.X[0]:.2f}s, dV={res.X[1]:.4f} m/s | Obj={res.F[0]:.4f} | Constr={res.G[0]}")
+                valid_solutions.append({
+                    "seed": seed,
+                    "dt_maneuver_s": res.X[0],
+                    "delta_v_ms": res.X[1],
+                    "objective_dv": res.F[0],
+                    "constraint_violations": res.G[0],
+                    "conjunctions_status": best_kc2_list
+                })
+                
+                # Salvar top 5 threats em arquivo separado
+                top5_file = os.path.join(project_root, "cenario1", f"{primary_id}_seed_{seed}_top5_threats.json")
+                with open(top5_file, "w") as f:
+                    json.dump(top5_threats, f, indent=4)
+                
+                # Salvar por seed imediamente para backup
+                seed_file = os.path.join(project_root, "cenario1", f"{primary_id}_seed_{seed}_solution.json")
+                with open(seed_file, "w") as f:
+                    json.dump(valid_solutions[-1], f, indent=4)
                     
-            n_evals.append(gen + 1)
+            else:
+                logger.info(f"   Nenhuma solução válida encontrada no Seed {seed}")
+    
+        # Salvar soluções em JSON
+        solutions_file = os.path.join(project_root, "cenario1", f"{primary_id}_optimization_solutions_{int(time.time())}.json")
+        with open(solutions_file, "w") as f:
+            json.dump(valid_solutions, f, indent=4)
+        logger.info(f"Soluções salvas em {solutions_file}")
+    
+        # Plotar Curvas de Convergência
+        plt.figure(figsize=(10, 6))
+        
+        for seed, res in all_histories:
+            if res.history is None:
+                continue
+                
+            n_evals = []
+            opt = []
             
-        plt.plot(n_evals, opt, label=f"Seed {seed}", marker='.', alpha=0.7)
+            generations = len(res.history)
+            for gen in range(generations):
+                algo_snapshot = res.history[gen]
+                
+                pop = algo_snapshot.pop
+                feas = (pop.get("CV") <= 0.0).flatten()
+                
+                if np.any(feas):
+                    best_valid_f = pop[feas].get("F").min()
+                    opt.append(best_valid_f)
+                else:
+                    if len(opt) > 0:
+                        opt.append(opt[-1])
+                    else:
+                        opt.append(np.nan)
+                        
+                n_evals.append(gen + 1)
+                
+            plt.plot(n_evals, opt, label=f"Seed {seed}", marker='.', alpha=0.7)
 
-    plt.title(f"Convergência do Otimizador GA (Apenas Soluções Válidas - Satélite {PRIMARY_ID})")
-    plt.xlabel("Geração")
-    plt.ylabel(r"Objetivo Mínimo: $\Delta V$ (m/s) Consumido")
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"cenario1/{PRIMARY_ID}_convergence_plot_pymoo.png", dpi=150)
-    logger.info(f"Plot saved in cenario1/{PRIMARY_ID}_convergence_plot_pymoo.png")
+        plt.title(f"Convergência do Otimizador GA (Apenas Soluções Válidas - Satélite {primary_id})")
+        plt.xlabel("Geração")
+        plt.ylabel(r"Objetivo Mínimo: $\Delta V$ (m/s) Consumido")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"cenario1/{primary_id}_convergence_plot_pymoo.png", dpi=150)
+        logger.info(f"Plot saved in cenario1/{primary_id}_convergence_plot_pymoo.png")
 
 if __name__ == "__main__":
     run_optimization_campaign()
