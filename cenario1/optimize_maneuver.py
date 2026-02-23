@@ -17,6 +17,9 @@ from pymoo.termination import get_termination
 # Configuração da Otimização em Lote
 PRIMARY_IDS_BATCH = [61046, 64830, 65774]  # Satélites que serão rodados sequencialmente
 
+# Workers
+N_WORKERS = 12
+
 # Setup paths to ensure we can import 'app'
 file_path = os.path.abspath(__file__)
 project_root = os.path.dirname(os.path.dirname(file_path))
@@ -271,14 +274,14 @@ def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_dat
 
     return evaluated_conjunctions
 
-# Variável global para evitar recriar as 12 JVMs a cada geração do PyMoo
+# Variável global para evitar recriar as N_WORKERS JVMs a cada geração do PyMoo
 _global_executor = None
 
 def get_executor():
     global _global_executor
     if _global_executor is None:
         _global_executor = ProcessPoolExecutor(
-            max_workers=12, 
+            max_workers=N_WORKERS, 
             mp_context=multiprocessing.get_context('spawn')
         )
     return _global_executor
