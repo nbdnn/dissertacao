@@ -10,6 +10,10 @@ from ..download_all_tles import requestTles
 from .config import ELLIPSOID_BOUNDS
 from .stk_parser import parse_stk_ephemeris
 
+# --- Configuration ---
+N_WORKERS = 32          # Number of workers for parallel processing
+CHUNKSIZE = 200         # Number of items per chunk to reduce IPC overhead
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -158,7 +162,169 @@ def interpolate_ephemeris_at_dates(ephemeris_data, target_dates):
 #         else:
 #             secondaries.append(item)
 
-#     return primaries, secondaries
+def _sieve_worker(args_chunk):
+    """
+    Worker function at the module level so it can be pickled by ProcessPoolExecutor.
+    Processes a chunk of arguments at once to reduce IPC overhead.
+    """
+    import jpype
+    from app.orekit_config import setup_orekit
+    setup_orekit()
+    
+    if not jpype.isThreadAttachedToJVM():
+        try:
+            jpype.attachThreadToJVM()
+        except Exception:
+            pass
+
+    from org.orekit.time import AbsoluteDate, TimeScalesFactory
+    from org.orekit.frames import FramesFactory
+    from org.orekit.propagation.analytical.tle import TLE, TLEPropagator
+    import numpy as np
+    from app.conjunctions.filter_pre import filterPre
+    from app.conjunctions.bisection import bisectionMethod
+    from app.conjunctions.conjunction_analysis import conjunctionAnalysis
+
+    utc = TimeScalesFactory.getUTC()
+    inertialFrame = FramesFactory.getEME2000()
+
+    def propagate_states(tle_dict, start, end, step):
+        propagator = TLEPropagator.selectExtrapolator(
+            TLE(tle_dict["TLE_LINE1"], tle_dict["TLE_LINE2"])
+        )
+        results = []
+        curr = start
+        while curr.compareTo(end) <= 0:
+            pv = propagator.getPVCoordinates(curr, inertialFrame)
+            p = pv.getPosition()
+            v = pv.getVelocity()
+            p_arr = np.array((p.getX(), p.getY(), p.getZ()))
+            v_arr = np.array((v.getX(), v.getY(), v.getZ()))
+            results.append((curr, p_arr, v_arr, None))
+            curr = curr.shiftedBy(step)
+        return results
+
+    batch_conjunctions = []
+
+    for args in args_chunk:
+        (idx, secondary, primary, initialTime_str, daysOfSimulation, h_step, threshold,
+         priApoapsis, priPeriapsis, should_check_altitude, ephemerides_dict, use_ephemeris_files,
+         ephemerides_path, primary_states_serializable, primary_data_raw, use_ephem_primary,
+         ellipsoid_bounds, verboseConjAnalysis, screening_mode) = args
+
+        initialTime = AbsoluteDate(initialTime_str, utc)
+        endTime = initialTime.shiftedBy(daysOfSimulation * 24 * 3600.)
+
+        if secondary.get("NORAD_CAT_ID") == primary.get("NORAD_CAT_ID"):
+            continue
+
+        if should_check_altitude and priApoapsis is not None and priPeriapsis is not None:
+            secPeriapsis = float(secondary["PERIAPSIS"])
+            secApoapsis = float(secondary["APOAPSIS"])
+            altitude_overlap = (secPeriapsis < priApoapsis and priPeriapsis < secApoapsis)
+            if not (altitude_overlap and secPeriapsis > 250):
+                continue
+
+        secondary_id = int(secondary['NORAD_CAT_ID'])
+        use_ephem_secondary = False
+        secondary_data_raw = None
+        
+        if ephemerides_dict and secondary_id in ephemerides_dict:
+            secondary_data_raw = ephemerides_dict[secondary_id]
+            use_ephem_secondary = True
+        elif use_ephemeris_files:
+            from app.conjunctions.sieve import load_ephemeris_states
+            secondary_data_raw = load_ephemeris_states(secondary_id, ephemerides_path, initialTime, endTime, h_step, inertialFrame)
+            if secondary_data_raw:
+                use_ephem_secondary = True
+            else:
+                continue
+
+        if use_ephem_secondary:
+            from app.conjunctions.sieve import interpolate_ephemeris_at_dates
+            simulation_dates = []
+            curr = initialTime
+            while curr.compareTo(endTime) <= 0:
+                simulation_dates.append(curr)
+                curr = curr.shiftedBy(float(h_step))
+            secondary_states = interpolate_ephemeris_at_dates(secondary_data_raw, simulation_dates)
+        else:
+            secondary_states = propagate_states(secondary, initialTime, endTime, h_step)
+            use_ephem_secondary = False
+        
+        t, states_pairs = filterPre(
+            primary_states_serializable,
+            secondary_states,
+            primary=primary,
+            secondary=secondary,
+            rc=threshold,
+            h=h_step,
+            verbose=False
+        )
+
+        tcas = []
+
+        for i in range(len(t)):
+            times, distances, bisection_states = bisectionMethod(
+                initialTime.shiftedBy(t[i]),
+                primary=primary,
+                secondary=secondary,
+                primary_states=primary_data_raw if use_ephem_primary else None,
+                secondary_states=secondary_data_raw if use_ephem_secondary else None,
+                h=1.
+            )
+            
+            if not times or len(distances) < 2:
+                continue
+
+            if distances[-1] < distances[-2]:
+                tca, missDistance = times[-1], distances[-1]
+            else:
+                tca, missDistance = times[-2], distances[-2]
+
+            if missDistance < threshold:
+                tcas.append(t[i])
+
+                if len(tcas) == 1 or abs(tcas[-1] - tcas[-2]) > 10 * 60:
+                    p_state_res, s_state_res = None, None
+                    tca_time_shifted = initialTime.shiftedBy(t[i] + tca)
+
+                    if distances[-1] < distances[-2]:
+                        p_state_res, s_state_res = bisection_states[-1]
+                    else:
+                        p_state_res, s_state_res = bisection_states[-2]
+
+                    if use_ephem_primary and primary_data_raw:
+                        from app.conjunctions.sieve import interpolate_ephemeris_at_dates
+                        p_state_res = interpolate_ephemeris_at_dates(primary_data_raw, [tca_time_shifted])[0]
+
+                    if use_ephem_secondary and secondary_data_raw:
+                        from app.conjunctions.sieve import interpolate_ephemeris_at_dates
+                        s_state_res = interpolate_ephemeris_at_dates(secondary_data_raw, [tca_time_shifted])[0]
+
+                    result = conjunctionAnalysis(
+                        primary=primary,
+                        secondary=secondary,
+                        tcaTime=tca_time_shifted,
+                        verbose=verboseConjAnalysis,
+                        ellipsoid_bounds=ellipsoid_bounds,
+                        primary_state_vector=p_state_res,
+                        secondary_state_vector=s_state_res
+                    )
+                    if result.get('is_violated', False):
+                        if screening_mode:
+                            batch_conjunctions.append({
+                                "secondary_name": result["secondary_name"],
+                                "secondary_id": result["secondary_id"],
+                                "tca": result["tca_utc"],
+                                "kc2": result.get("kc_squared", 0.0),
+                                "is_violated": result["is_violated"]
+                            })
+                        else:
+                            batch_conjunctions.append(result)
+                            
+    return batch_conjunctions
+
 
 
 def sieveAlgorithm(
@@ -305,148 +471,47 @@ def sieveAlgorithm(
             priApoapsis = float(primary["APOAPSIS"])
             priPeriapsis = float(primary["PERIAPSIS"])
 
-        total_secondaries = len(secondaries)
-        for idx, secondary in enumerate(secondaries):
-            # Update progress check to every 1 item to show life, as processing is slow
-            percent = 100.0 * idx / total_secondaries
-            print(
-                f"\rProgress: {percent:.2f}% ",
-                f"({idx}/{total_secondaries}) ",
-                f"- Checking ID {secondary.get('NORAD_CAT_ID', 'Unknown')}...", end="", flush=True)
+        initialTime_str = initialTime.toString()
+        primary_states_serializable = [(d.toString(), p, v, None) for d, p, v, _ in primary_states]
 
-            if secondary.get("NORAD_CAT_ID") != primary.get("NORAD_CAT_ID"):
+        worker_args_list = []
+        for idx, sec in enumerate(secondaries):
+            worker_args_list.append((
+                idx, sec, primary, initialTime_str, daysOfSimulation, h_step, threshold,
+                priApoapsis if should_check_altitude else None, 
+                priPeriapsis if should_check_altitude else None, 
+                should_check_altitude, ephemerides_dict, use_ephemeris_files,
+                ephemerides_path if use_ephemeris_files else None,
+                primary_states_serializable, primary_data_raw, use_ephem_primary,
+                ellipsoid_bounds, verboseConjAnalysis, screening_mode
+            ))
 
-                if should_check_altitude:
-                    # OPTIMIZATION: Check altitude overlap BEFORE propagation
-                    # This logic mimics filterPre's initial check
-                    secPeriapsis = float(secondary["PERIAPSIS"])
-                    secApoapsis = float(secondary["APOAPSIS"])
+        import concurrent.futures
+        import multiprocessing
+        
+        # Parallel execution using ProcessPoolExecutor (GIL bypass)
+        # Using global configuration constants N_WORKERS and CHUNKSIZE from config header
 
-                    # Check for oldTLE flag (defaults to False here) but filterPre takes it.
-                    altitude_overlap = (secPeriapsis < priApoapsis and priPeriapsis < secApoapsis)
-                    if not (altitude_overlap and secPeriapsis > 250):
-                        # Skip propagation
-                        continue
+        # Chunk the arguments
+        chunked_args = [worker_args_list[i:i + CHUNKSIZE] for i in range(0, len(worker_args_list), CHUNKSIZE)]
 
-                if verbose:
-                    print(
-                        f'\nSecondary ID: {secondary.get("NORAD_CAT_ID", "?")}'
-                    )
-                    if "TLE_LINE1" in secondary:
-                        print(f"TLE\n{secondary['TLE_LINE1']}\n{secondary['TLE_LINE2']}")
-
-                if verbose:
-                    print(f'Ecentricidade: {secondary["ECCENTRICITY"]}')
-                    print(f'Apogeu: {secondary["APOAPSIS"]}, Perigeo: {secondary["PERIAPSIS"]}')
-
-                # Determine states source for Secondary
-                secondary_id = int(secondary['NORAD_CAT_ID'])
-                use_ephem_secondary = False
-                secondary_data_raw = None
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=N_WORKERS,
+            mp_context=multiprocessing.get_context('spawn')
+        ) as executor:
+            total_secondaries = len(secondaries)
+            completed = 0
+            
+            # Map returns results in order
+            for res_list in executor.map(_sieve_worker, chunked_args):
+                completed += CHUNKSIZE
+                if completed > total_secondaries:
+                    completed = total_secondaries
+                percent = 100.0 * completed / total_secondaries
+                print(f"\rProgress: {percent:.2f}% ({completed}/{total_secondaries}) ", end="", flush=True)
                 
-                if ephemerides_dict and secondary_id in ephemerides_dict:
-                    secondary_data_raw = ephemerides_dict[secondary_id]
-                    use_ephem_secondary = True
-                elif use_ephemeris_files:
-                    secondary_data_raw = load_ephemeris_states(secondary_id, ephemerides_path, initialTime, endTime, h_step, inertialFrame)
-                    if secondary_data_raw:
-                        use_ephem_secondary = True
-                    else:
-                        if verbose: print(f" Skipping secondary {secondary_id} (No ephemeris)")
-                        continue
-                
-                if use_ephem_secondary:
-                    # Interpolate secondary to standard grid
-                    secondary_states = interpolate_ephemeris_at_dates(secondary_data_raw, simulation_dates)
-                else:
-                    # Propagate Secondary
-                    secondary_states = propagate_states(secondary, initialTime, endTime, h_step)
-                    use_ephem_secondary = False
+                if res_list:
+                    conjunctions.extend(res_list)
 
-                # filterPre returns times and list of (primary_state, secondary_state) tuples
-                
-                # Now we are guaranteed that primary_states and secondary_states are on the grid defined by h_step
-                t, states_pairs = filterPre(
-                    primary_states,
-                    secondary_states,
-                    primary=primary,
-                    secondary=secondary,
-                    rc=threshold,
-                    h=h_step,
-                    verbose=verbose
-                )
-
-                tcas = []
-
-                for i in range(len(t)):
-
-                    times, distances, bisection_states = bisectionMethod(
-                        initialTime.shiftedBy(t[i]),
-                        primary=primary,
-                        secondary=secondary,
-                        primary_states=primary_data_raw if use_ephem_primary else None,
-                        secondary_states=secondary_data_raw if use_ephem_secondary else None,
-                        h=1.
-                    )
-                    if not t:
-                        pass # Sieve found nothing
-                        # print(
-                        #    f'\nSecondary: {secondary["OBJECT_NAME"]}    '
-                        #    f'NORAD:{secondary["NORAD_CAT_ID"]}'
-                        # )
-
-
-                    if distances[-1] < distances[-2]:
-                        tca, missDistance = times[-1], distances[-1]
-                    else:
-                        tca, missDistance = times[-2], distances[-2]
-
-                    if missDistance < threshold:
-                        tcas.append(t[i])
-
-                        if len(tcas) == 1 or abs(tcas[-1] - tcas[-2]) > 10 * 60:
-                            # Pick the correct state tuple from bisection output
-                            # bisection_states matches 'times' and 'missDistance'
-                            # If we picked index -1 (last), we use index -1 of states.
-
-                            p_state_res, s_state_res = None, None
-
-                            # Re-eval logic to match TCA choice
-                            tca_time_shifted = initialTime.shiftedBy(t[i] + tca)
-
-                            if distances[-1] < distances[-2]:
-                                # Use last point
-                                p_state_res, s_state_res = bisection_states[-1]
-                            else:
-                                # Use second to last
-                                p_state_res, s_state_res = bisection_states[-2]
-
-                            # Get full state vector for ephemeris mode to avoid TLE fallback crash
-                            if use_ephem_primary and primary_data_raw:
-                                p_state_res = interpolate_ephemeris_at_dates(primary_data_raw, [tca_time_shifted])[0]
-
-                            if use_ephem_secondary and secondary_data_raw:
-                                s_state_res = interpolate_ephemeris_at_dates(secondary_data_raw, [tca_time_shifted])[0]
-
-                            result = conjunctionAnalysis(
-                                primary=primary,
-                                secondary=secondary,
-                                tcaTime=tca_time_shifted,
-                                verbose=verboseConjAnalysis,
-                                ellipsoid_bounds=ellipsoid_bounds,
-                                primary_state_vector=p_state_res,
-                                secondary_state_vector=s_state_res
-                            )
-                            if result['is_violated']:
-                                if screening_mode:
-                                    conjunctions.append({
-                                        "secondary_name": result["secondary_name"],
-                                        "secondary_id": result["secondary_id"],
-                                        "tca": result["tca_utc"],
-                                        "kc2": result["kc_squared"],
-                                        "is_violated": result["is_violated"]
-                                    })
-                                else:
-                                    conjunctions.append(result)
         print()
     return conjunctions

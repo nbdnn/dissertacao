@@ -3,7 +3,7 @@ import glob
 import math
 
 bounds = (20000.0, 50000.0, 20000.0)
-files = glob.glob("/home/guima/dissertacao_test/cenario1/*_top5_threats.json")
+files = glob.glob("/home/guima/dissertacao/cenario1/*_top5_threats.json")
 
 for f in files:
     with open(f, 'r') as file:

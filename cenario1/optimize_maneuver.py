@@ -18,7 +18,7 @@ from pymoo.termination import get_termination
 PRIMARY_IDS_BATCH = [61046, 64830, 65774]  # Satélites que serão rodados sequencialmente
 
 # Workers
-N_WORKERS = 12
+N_WORKERS = 128
 
 # Setup paths to ensure we can import 'app'
 file_path = os.path.abspath(__file__)
@@ -148,32 +148,46 @@ def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_dat
         tle_s = TLE(cand.s_tle1, cand.s_tle2)
         prop_s = TLEPropagator.selectExtrapolator(tle_s)
         
-        # Busca fina do novo TCA em torno do tca_date_original
-        # Devido ao pequeno DV, a nova conjunção deve estar perto
-        search_start = cand_tca_date.shiftedBy(-30.0)
-        search_end = cand_tca_date.shiftedBy(30.0)
+        # Construir dados primários e secundários cedo para o Bisection e para a CA
+        p_line1_for_ca = virtual_p_tle1 if virtual_p_tle1 else cand.p_tle1
+        p_line2_for_ca = virtual_p_tle2 if virtual_p_tle2 else cand.p_tle2
+
+        primary_data = {
+            "TLE_LINE1": p_line1_for_ca, 
+            "TLE_LINE2": p_line2_for_ca,
+            "OBJECT_NAME": "PRIMARY_VIRTUAL",
+            "NORAD_CAT_ID": primary_id
+        }
+        secondary_data = {
+            "TLE_LINE1": cand.s_tle1, 
+            "TLE_LINE2": cand.s_tle2,
+            "OBJECT_NAME": "SECONDARY_CANDIDATE",
+            "NORAD_CAT_ID": cand.sec_id
+        }
+
+        # Busca fina do novo TCA em torno do tca_date original usando Bisection
+        from app.conjunctions.bisection import bisectionMethod
+        search_start = cand_tca_date.shiftedBy(-60.0)
         
-        step = 0.5
-        curr_time = search_start
-        min_dist = float('inf')
-        new_tca_date = cand_tca_date
+        times, distances, __ = bisectionMethod(
+            search_start,
+            primary_data,
+            secondary_data,
+            h=0.5
+        )
         
-        # Guardar estados para o Conjunction Analysis
-        best_p_pv = None
-        best_s_pv = None
-        
-        while curr_time.compareTo(search_end) <= 0:
-            p_pv = propagator_primary.getPVCoordinates(curr_time, inertialFrame)
-            s_pv = prop_s.getPVCoordinates(curr_time, inertialFrame)
+        if not times or len(times) < 2:
+            min_dist = float('inf')
+            new_tca_date = cand_tca_date
+            best_p_pv = propagator_primary.getPVCoordinates(new_tca_date, inertialFrame)
+            best_s_pv = prop_s.getPVCoordinates(new_tca_date, inertialFrame)
+        else:
+            best_idx = -1 if distances[-1] < distances[-2] else -2
+            new_tca_date = search_start.shiftedBy(float(times[best_idx]))
+            min_dist = distances[best_idx]
             
-            dist = Vector3D.distance(p_pv.getPosition(), s_pv.getPosition())
-            if dist < min_dist:
-                min_dist = dist
-                new_tca_date = curr_time
-                best_p_pv = p_pv
-                best_s_pv = s_pv
-            
-            curr_time = curr_time.shiftedBy(step)
+            best_p_pv = propagator_primary.getPVCoordinates(new_tca_date, inertialFrame)
+            best_s_pv = prop_s.getPVCoordinates(new_tca_date, inertialFrame)
             
         # Reformatar o estado para a pipeline conjunctionAnalysis
         if best_p_pv is not None and best_s_pv is not None:
@@ -189,24 +203,6 @@ def evaluate_trajectory_screening(propagator_primary, candidates, t_maneuver_dat
             
             p_state_full = (new_tca_date, p_pos_arr, p_vel_arr, None)
             s_state_full = (new_tca_date, s_pos_arr, s_vel_arr, None)
-            
-            # Precisamos fingir ser JSON primary/secondary object para a conjunctionAnalysis
-            # Use the virtual TLEs if provided, otherwise fallback to the original primary TLEs
-            p_line1_for_ca = virtual_p_tle1 if virtual_p_tle1 else cand.p_tle1
-            p_line2_for_ca = virtual_p_tle2 if virtual_p_tle2 else cand.p_tle2
-
-            primary_data = {
-                "TLE_LINE1": p_line1_for_ca, 
-                "TLE_LINE2": p_line2_for_ca,
-                "OBJECT_NAME": "PRIMARY_VIRTUAL",
-                "NORAD_CAT_ID": 0
-            }
-            secondary_data = {
-                "TLE_LINE1": cand.s_tle1, 
-                "TLE_LINE2": cand.s_tle2,
-                "OBJECT_NAME": "SECONDARY_CANDIDATE",
-                "NORAD_CAT_ID": cand.sec_id
-            }
             
             if detailed:
                 kc2 = float('inf')  # Inicializa como seguro
@@ -339,7 +335,10 @@ def _evaluate_single_member_worker(args):
             virtual_p_tle1=vp_line1, virtual_p_tle2=vp_line2
         )
         
-        violations = sum(1 for c in evaluated_conjunctions if c["kc_squared"] < 1.0)
+        # Converter a restrição estrita Binária/Discreta num somatório contínuo de penalidades
+        # Se kc2 >= 1.0, o custo é 0 (passou seguro). Se kc2 < 1.0 (ex: 0.2), o custo é 0.8
+        # Isso dá à heurística PyMoo a noção matemática de quão longe a solução está da margem de segurança
+        violations = sum(max(0.0, 1.0 - c.get("kc_squared", 0.0)) for c in evaluated_conjunctions)
         
         ret_F = delta_v
         ret_G = violations
@@ -347,8 +346,8 @@ def _evaluate_single_member_worker(args):
         
     except Exception as e:
         logger.error(f"Erro na propagação da manobra virtual: {e}")
-        ret_F = 1e6
-        ret_G = 100
+        # Retornar uma alta violação para rejeitar fortemente essa partícula
+        ret_G = 1000.0
         ret_kc_list = []
         
     print(f"\r[Seed {current_seed}] dt_maneuver: {dt_maneuver/3600.0:.2f}h | delta_V: {delta_v:.4f} m/s      ", end="", flush=True)
@@ -436,7 +435,6 @@ class CollisionAvoidanceOptimization(Problem):
             
         out["F"] = np.column_stack([res[0] for res in results])
         out["G"] = np.column_stack([res[1] for res in results])
-        out["kc2_list"] = [res[2] for res in results]
 
 def run_test(primary_id):
     """Função para extrair logs e instanciar o setup de screening."""
@@ -456,8 +454,30 @@ def run_test(primary_id):
     print(f"Otimizando PRIMARY_ID {primary_id} usando o screening mais recente: {latest_file}")
     
     # 1. Extração
-    t_tca_str, candidates = load_screening_results(latest_file, primary_id)
-    logger.info(f"Primeiro TCA encontrado: {t_tca_str} (Total candidates c/ TLE: {len(candidates)})")
+    t_tca_str_screening, candidates = load_screening_results(latest_file, primary_id)
+    
+    # 1.5. Busca do TCA na Analysis
+    pattern_analysis = os.path.join(project_root, "cenario1", "analysis_results", f"analysis_{primary_id}_*.json")
+    files_analysis = glob.glob(pattern_analysis)
+    if files_analysis:
+        import json
+        from org.orekit.time import AbsoluteDate, TimeScalesFactory
+        
+        latest_analysis = max(files_analysis, key=os.path.getmtime)
+        with open(latest_analysis, 'r') as f:
+            analysis_data = json.load(f)
+            
+        utc = TimeScalesFactory.getUTC()
+        min_tca_date = min([AbsoluteDate(c["tca_utc"].replace("Z", ""), utc) for c in analysis_data])
+        t_tca_str = min_tca_date.toString()
+        
+        logger.info(f"TCA Base alterado para o do arquivo de analysis: {t_tca_str} (Triagem original era {t_tca_str_screening})")
+        print(f"TCA Base alterado para: {t_tca_str}")
+    else:
+        t_tca_str = t_tca_str_screening
+        logger.warning("Analysis não encontrada, usando TCA da triagem.")
+        
+    logger.info(f"Primeiro TCA adotado: {t_tca_str} (Total candidates c/ TLE: {len(candidates)})")
     
     # 2. Avaliação simulada de uma partícula
     problem = CollisionAvoidanceOptimization(t_tca_str, candidates, primary_id)
@@ -485,7 +505,7 @@ def run_optimization_campaign():
             logger.warning(f"Pulando {primary_id} pois não foi possível carregar o problem.")
             continue
         
-        num_seeds = 5
+        num_seeds = 10
         all_histories = []
         
         logger.info(f"Iniciando campanha de otimização pymoo ...")
@@ -509,14 +529,37 @@ def run_optimization_campaign():
             if res.F is not None:
                 x_best = res.X
                 out_best = {}
-                problem._evaluate(x_best, out_best)
-                best_kc2_list = out_best.get("kc2_list", [[]])[0]
+                logger.info(f"   [Time Check] Fim do minimize. Executando propagação manual no melhor para extrair métricas de conjução...")
+                t_eval_start = time.time()
                 
-                detailed_list = compute_detailed_metrics_for_best_solution(
-                    x_best[0], x_best[1], problem.t_tca_str, problem.candidates, primary_id
+                # Chamando o worker diretamente para escapar da estrutura dicionário vetorial do PyMoo em avaliar lists
+                _, _, best_kc2_list = _evaluate_single_member_worker((
+                     x_best, problem.t_tca_str, problem.candidates, seed, primary_id
+                ))
+                
+                t_eval_end = time.time()
+                logger.info(f"   [Time Check] Extração manual de Kc2_list durou: {t_eval_end - t_eval_start:.2f}s")
+                
+                
+                # Encontrar os top 5 usando a lista já avaliada para poupar re-simulação
+                sorted_simple = sorted(
+                    best_kc2_list, 
+                    key=lambda x: (x.get("kc_squared", float('inf')), x.get("min_dist_m", float('inf')))
                 )
+                top5_sec_ids = {c["sec_id"] for c in sorted_simple[:5]}
+                top5_candidates = [c for c in problem.candidates if c.sec_id in top5_sec_ids]
                 
-                # Ordenar por kc_squared e min_distance_m
+                logger.info(f"   [Time Check] Iniciando compute_detailed_metrics apenas para os Top 5...")
+                t_det_start = time.time()
+                detailed_list = compute_detailed_metrics_for_best_solution(
+                    x_best[0], x_best[1], problem.t_tca_str, top5_candidates, primary_id
+                )
+                t_det_end = time.time()
+                logger.info(f"   [Time Check] compute_detailed_metrics durou: {t_det_end - t_det_start:.2f}s")
+                
+                logger.info(f"   [Time Check] Ordenando e salvando JSONs...")
+                t_json_start = time.time()
+                # Ordenar novamente a lista detalhada para manter a forma final
                 sorted_conjunctions = sorted(
                     detailed_list, 
                     key=lambda x: (x.get("kc_squared", float('inf')), x.get("min_distance_m", float('inf')))
@@ -542,6 +585,9 @@ def run_optimization_campaign():
                 seed_file = os.path.join(project_root, "cenario1", f"{primary_id}_seed_{seed}_solution.json")
                 with open(seed_file, "w") as f:
                     json.dump(valid_solutions[-1], f, indent=4)
+                
+                t_json_end = time.time()
+                logger.info(f"   [Time Check] Ordenação e Salvamento duraram: {t_json_end - t_json_start:.2f}s")
                     
             else:
                 logger.info(f"   Nenhuma solução válida encontrada no Seed {seed}")

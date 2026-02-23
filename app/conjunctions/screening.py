@@ -5,7 +5,7 @@ import json
 import logging
 import os
 
-if __name__ == '__main__' and __package__ is None:
+if __name__ in ('__main__', '__mp_main__') and not __package__:
     # Hack to allow running this script directly while keeping relative imports
     file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(file_path)))
