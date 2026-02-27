@@ -1,0 +1,264 @@
+\chapter{METODOLOGIA}
+\label{chap:metodologia}
+
+Este capítulo apresenta a metodologia computacional desenvolvida para a resolução do problema de Otimização de Manobras de Evasão de Colisão (CAMO). O estudo foi estruturado para avaliar a eficácia e a robustez dos algoritmos em dois regimes de fidelidade: (i) uma abordagem geométrica preliminar, baseada na propagação analítica via SGP4 e no uso de equações variacionais; e (ii) uma abordagem probabilística de alta precisão, empregando propagação numérica de efemérides e cálculo de probabilidade de colisão.
+
+Para ambos os cenários, a otimização utiliza a biblioteca \textit{pymoo} (\textit{Multi-objective Optimization in Python}) \cite{pymoo}. A escolha deste \textit{framework} deve-se à sua arquitetura modular e à implementação eficiente de operadores genéticos, o que permite uma análise estatística consistente através de múltiplas sementes aleatórias (\textit{seeds}) e facilita o tratamento de restrições em cenários de múltiplas conjunções (\textit{multi-event scenarios}).
+
+\section{Definição dos Cenários de Estudo}
+\label{sec:scenarios_def}
+
+A validação da metodologia proposta é conduzida através de dois cenários distintos, desenhados para representar diferentes realidades operacionais no que tange à disponibilidade e precisão dos dados de navegação. A distinção fundamental entre os cenários reside na natureza dos dados de entrada (catálogo público vs. efemérides precisas) e, consequentemente, na métrica de risco adotada para a otimização.
+
+\subsection{Cenário I: Operação Baseada em TLE (Dados Limitados)}
+\label{subsec:scenario_tle}
+
+Este cenário aborda a situação operacional de satélites que não dispõem de efemérides de alta precisão, seja devido a restrições de \textit{hardware} (ausência de receptores GPS/GNSS a bordo) ou pela falta de acesso a dados refinados dos objetos secundários. Neste contexto, a tomada de decisão depende exclusivamente de dados públicos do catálogo do \textit{United States Space Command} (USSPACECOM). Esta organização é a autoridade responsável pela manutenção do catálogo oficial de objetos em órbita, disponibilizando os Conjuntos de Elementos de Duas Linhas (TLE) para a comunidade civil através da plataforma Space-Track \cite{SpaceTrack}.
+
+A estruturação deste cenário segue um fluxo metodológico sequencial: seleção do modelo de propagação, determinação dos eventos de conjunção para a composição da lista de interesse — formada pelos objetos espaciais que orbitam as proximidades do satélite — e, finalmente, o estabelecimento dos critérios geométricos de segurança.
+
+\textbf{Propagação e Dados de Entrada}
+
+Utiliza-se o modelo analítico SGP4 (\textit{Simplified General Perturbations-4}) para a propagação orbital, alimentado pelos TLEs. Dada a natureza desses dados, que representam elementos médios, a incerteza posicional é inerente à modelagem simplificada das perturbações, especialmente o arrasto atmosférico.
+
+\textbf{Determinação de Eventos e \textit{Concern List}}
+
+Previamente à execução do algoritmo de otimização, realiza-se o processamento do catálogo para a \textbf{determinação dos eventos de conjunção}. Este procedimento visa mapear o ambiente dinâmico ao redor do satélite, identificando eventos de conjunção entre objetos e o satélite dentro de um horizonte de 7 dias, além disso, determina uma lista de interesse de objetos que orbitam a vizinhança do satélite.
+
+A \textit{Concern List} (Lista de Objetos de Interesse) resultante é composta pela união de dois grupos de objetos:
+\begin{enumerate}
+    \item \textbf{Conjunções Primárias:} Objetos cujas trajetórias interceptam um volume de segurança padrão denomidado de $\mathcal{B}_{safe}$, representando um risco direto de colisão.
+    \item \textbf{Conjunções Secundárias:} Objetos que, embora não violem o volume de segurança estrito, adentram uma ``Zona de Alerta'' ampliada ($\mathcal{B}_{buffer} = 100 \times \mathcal{B}_{safe}$), caracterizando uma aproximação que requer monitoramento.
+\end{enumerate}
+
+O mapeamento destes objetos vizinhos é fundamental para a estratégia de manobra: a solução ótima gerada pelo AG deve evitar a conjunção primária sem criar novos conflitos com estes objetos que transitam nas adjacências espaço-temporais do satélite.
+
+\textbf{Métrica de Risco: Volume de Exclusão Geométrico}
+
+Para a avaliação da segurança, adota-se uma abordagem determinística baseada na distância relativa no referencial RSW. O critério de segurança é definido pela não-violação de um volume de exclusão elipsoidal ($\mathcal{B}_{safe}$), cujos semi-eixos são dimensionados para absorver as incertezas da propagação SGP4.
+
+Os limites de segurança são definidos por $R_{c,U} = 1$ km (Radial), $R_{c,V} = 5$ km (\textit{Along-Track}) e $R_{c,W} = 1$ km (\textit{Cross-Track}). O volume de segurança é descrito formalmente por:
+
+\begin{equation}
+    \mathcal{B}_{safe} = \left\{ (r, s, w) \in \mathbb{R}^3 : \left(\frac{r}{R_{c,U}}\right)^2 + \left(\frac{s}{R_{c,V}}\right)^2 + \left(\frac{w}{R_{c,W}}\right)^2 < 1 \right\}
+    \label{eq:ellipsoid_safe}
+\end{equation}
+
+O limiar estendido na direção \textit{Along-Track} (componente $S$) visa mitigar a incerteza predominante do arrasto atmosférico. Qualquer solução de manobra que resulte em uma trajetória onde o vetor posição relativa no TCA penetre este elipsoide é considerada inviável.
+
+\subsection{Cenário II: Operação de Alta Precisão (Efemérides)}
+\label{subsec:scenario_precision}
+
+Este cenário representa missões que operam com dados de alta fidelidade, típicos de satélites equipados com receptores GNSS ou que têm acesso a mensagens de dados de conjunção (CDM). A estruturação deste cenário segue a mesma sistemática sequencial do caso anterior, diferindo fundamentalmente na precisão dos modelos dinâmicos e na substituição dos critérios geométricos por métricas probabilísticas de risco.
+
+\textbf{Propagação e Dados de Entrada}
+
+Para a propagação orbital, abandona-se o modelo analítico em favor de um propagador numérico de alta precisão. A integração das equações de movimento é realizada utilizando a biblioteca \textit{Orekit} \cite{Orekit}, considerando um modelo de forças perturbadoras completo que inclui: o geopotencial de alta ordem, o arrasto atmosférico (com modelos de densidade dinâmica), a atração gravitacional de terceiros corpos (Sol e Lua) e a pressão de radiação solar.
+
+Os dados de entrada consistem em vetores de estado osculadores ($\vec{r}, \vec{v}$) e suas respectivas matrizes de covariância, permitindo a análise estocástica do encontro.
+
+\textbf{Refinamento dos Eventos e \textit{Concern List}}
+
+Devido ao custo computacional proibitivo de realizar a propagação numérica de todo o catálogo de objetos espaciais (dezenas de milhares de objetos), adota-se uma estratégia de triagem hierárquica. Aproveita-se a \textit{Concern List} gerada no Cenário I (via SGP4) como filtro primário.
+
+O procedimento metodológico consiste em:
+\begin{enumerate}
+    \item \textbf{Seleção de Candidatos:} Assume-se que a lista de objetos identificados na triagem geométrica (que adentraram a zona de alerta $\mathcal{B}_{buffer}$) contém todos os riscos potenciais relevantes. Isso valida a utilidade operacional dos TLEs como ferramenta de varredura grosseira (\textit{coarse screening}).
+    \item \textbf{Refinamento Numérico:} Os objetos desta lista são re-propagados numericamente juntamente com o satélite primário. Determinam-se os novos instantes de máxima aproximação (TCA) e os vetores de estado precisos.
+    \item \textbf{Análise Comparativa:} Embora a otimização utilize apenas os dados numéricos, as discrepâncias entre as soluções SGP4 e Numérica são tabuladas nesta etapa para evidenciar a magnitude dos erros inerentes à abordagem analítica.
+\end{enumerate}
+
+Desta forma, a \textit{Concern List} utilizada para a otimização neste cenário contém os mesmos objetos do cenário anterior, porém com seus estados dinâmicos refinados pela alta fidelidade.
+
+\textbf{Métrica de Risco: Probabilidade de Colisão}
+
+Neste cenário, a decisão de manobra transcende a geometria simples. A métrica de segurança adotada é a Probabilidade de Colisão ($P_c$), calculada através do Método de Chan \cite{Chan1997}, utilizando a implementação nativa da biblioteca \textit{Orekit}.
+
+A função objetivo do algoritmo genético busca minimizar o consumo de combustível ($\Delta v$) sujeito à restrição de que a probabilidade máxima de colisão, após a manobra, seja reduzida a um nível de segurança aceitável. Assume-se, para fins de simplificação do modelo, que a manobra altera apenas o vetor de estado, mantendo a matriz de covariância inalterada no curto intervalo da conjunção.
+
+O critério de sucesso é definido pelo limiar:
+
+\begin{equation}
+    P_{c, \text{pm}} \leq 10^{-7},
+\end{equation}
+
+\noindent onde $P_{c, \text{pm}}$ é a probabilidade de colisão pós-manobra.
+
+Portanto, qualquer solução proposta pelo otimizador que resulte em uma probabilidade de colisão superior a $10^{-7}$ — seja com o objeto primário ou com qualquer membro da \textit{Concern List} — é considerada uma violação da restrição de segurança.
+
+\section{Modelagem Dinâmica da Manobra}
+\label{sec:maneuver_modeling}
+
+Para a modelagem da manobra em ambos os cenários, adota-se a \textbf{hipótese impulsiva}. Nesta abordagem, assume-se que o tempo de queima é desprezável em relação ao período orbital, resultando em uma alteração instantânea do vetor velocidade ($\Delta \vec{v}$) enquanto a posição do satélite permanece constante. Esta seção detalha o mapeamento das variáveis de decisão do algoritmo na dinâmica orbital para a geração da trajetória de evasão.
+
+O vetor de variáveis de decisão ($\mathbf{x}$), que compõe o cromossomo manipulado pelo Algoritmo Genético, é definido por:
+
+\begin{equation}
+    \mathbf{x} = [t_m, \Delta v_{t}]^T
+\end{equation}
+
+Onde:
+\begin{itemize}
+    \item $t_m$: Instante de aplicação da queima, definido dentro de uma janela operacional prévia ao TCA (Time of Closest Approach).
+    \item $\Delta v_{t}$: Magnitude do impulso aplicado na direção tangencial (\textit{along-track}). A restrição à componente tangencial justifica-se pela máxima eficiência deste vetor na alteração do semieixo maior e, consequentemente, na modificação do período orbital para evitar a colisão através da defasagem temporal (\textit{phasing maneuver}) \cite{Vallado2013}.
+\end{itemize}
+
+A seguir, detalha-se o processamento dinâmico destas variáveis em cada cenário.
+
+\subsection{Propagação Analítica via Equações de Gauss (Cenário I)}
+\label{subsec:gauss_modeling}
+
+No cenário baseado em TLE, a aplicação direta de um vetor de impulso em coordenadas cartesianas exigiria a conversão de elementos médios para osculadores, um processo que introduz erros numéricos incompatíveis com a precisão da teoria SGP4. Para contornar esta limitação e manter a consistência com os dados analíticos, utiliza-se uma abordagem perturbativa direta sobre os elementos orbitais médios.
+
+O método emprega as Equações Variacionais de Gauss (GVE) para mapear o impulso $\Delta v_t$ nas variações dos elementos orbitais ($\delta a, \delta e, \delta i, \delta \Omega, \delta \omega, \delta M$). Para uma manobra tangencial em órbitas quase circulares (típicas de LEO), a variação dominante ocorre no semieixo maior ($a$), descrita analiticamente por:
+
+\begin{equation}
+    \delta a \approx \frac{2 a^2 v_{mag}}{\mu} \Delta v_t
+    \label{eq:gauss_a}
+\end{equation}
+
+Onde $v_{mag}$ é a magnitude da velocidade no instante $t_m$ e $\mu$ é o parâmetro gravitacional padrão da Terra. O fluxo de cálculo segue a sequência:
+
+\begin{enumerate}
+    \item \textbf{Cálculo das Variações:} O algoritmo calcula $\delta a$ e as demais variações elementares utilizando o estado do satélite em $t_m$.
+    \item \textbf{Atualização do TLE:} Estas variações são somadas aos elementos originais do TLE do satélite primário, gerando um ``TLE Virtual'' que representa a órbita pós-manobra.
+    \item \textbf{Busca do Novo TCA:} Como a alteração de $a$ modifica o período orbital, o encontro não ocorre mais no instante original. O SGP4 propaga o TLE Virtual para encontrar o novo instante de máxima aproximação ($TCA_{new}$).
+    \item \textbf{Verificação Geométrica:} No $TCA_{new}$, calcula-se a distância relativa no referencial RSW para verificar a violação da caixa $\mathcal{B}_{safe}$.
+\end{enumerate}
+
+
+
+\subsection{Propagação Numérica (Cenário II)}
+\label{subsec:numerical_modeling}
+
+No cenário de alta fidelidade, a modelagem busca capturar a não-linearidade completa da dinâmica orbital e as perturbações ambientais. O processo substitui as aproximações analíticas pela integração numérica direta utilizando a biblioteca \textit{Orekit}.
+
+\begin{enumerate}
+    \item \textbf{Recuperação do Estado:} O vetor de estado osculador $(\vec{r}, \vec{v})$ do satélite é propagado numericamente desde a época inicial até o instante da manobra $t_m$.
+
+    \item \textbf{Aplicação do Impulso:} O vetor de impulso é incorporado ao estado do satélite. Denotando por $\vec{v}(t_m^-)$ a velocidade inercial imediatamente antes da queima, a nova velocidade ($\vec{v}_{man}$) é obtida transformando o impulso tangencial para o sistema inercial:
+
+    \begin{equation}
+        \vec{v}_{man} = \vec{v}(t_m^-) + \mathbf{M}_{rot}
+        \begin{bmatrix}
+           0 \\
+           \Delta v_t \\
+           0
+        \end{bmatrix}
+    \end{equation}
+
+    Onde $\mathbf{M}_{rot}$ é a matriz de rotação do referencial local (RSW) para o inercial (ECI) calculada no instante $t_m$. O vetor coluna evidencia que a manobra é aplicada exclusivamente na direção \textit{along-track}, mantendo nulas as componentes radial e normal. A posição permanece contínua ($\vec{r}_{man} = \vec{r}(t_m^-)$).
+
+    \item \textbf{Integração da Trajetória:} O novo estado é propagado até a vizinhança do encontro original. O integrador considera o conjunto completo de forças (Geopotencial, Terceiros Corpos, Arrasto e SRP).
+
+    \item \textbf{Cálculo da Probabilidade:} Determina-se o novo instante de máxima aproximação e, neste ponto, calcula-se a Probabilidade de Colisão ($P_c$) utilizando o método de Chan, mantendo-se a matriz de covariância inalterada pela manobra.
+\end{enumerate}
+
+\section{Arquitetura do Otimizador Genético}
+\label{sec:genetic_algorithm}
+
+A busca pela manobra ótima é realizada através de um Algoritmo Genético (AG), uma meta-heurística inspirada na evolução biológica capaz de explorar espaços de busca não-lineares e descontínuos. A implementação utiliza a estrutura da biblioteca \textit{pymoo} (Python Multi-objective Optimization) \cite{pymoo}, configurada para resolver um problema de minimização com restrições de desigualdade.
+
+
+\subsection{Formulação Matemática do Problema}
+
+O objetivo central é determinar a manobra de menor custo energético que garanta a segurança do satélite em relação a todos os objetos mapeados na \textit{Concern List}. Matematicamente, o problema é formulado como:
+
+\begin{equation}
+    \begin{aligned}
+        \min_{\mathbf{x}} \quad & J(\mathbf{x}) = |\Delta v_t| \\
+        \textrm{s.a.} \quad & g_i(\mathbf{x}) \le 0, \quad \forall i \in \{1, \dots, N_{obj}\} \\
+                            & \mathbf{x}_{lb} \le \mathbf{x} \le \mathbf{x}_{ub}
+    \end{aligned}
+    \label{eq:optimization_problem}
+\end{equation}
+
+Nesta formulação, $g_i(\mathbf{x})$ representa a função de restrição associada ao $i$-ésimo objeto. Para que o problema seja tratável numericamente, estas funções são construídas de modo que valores positivos indiquem violação da segurança e valores negativos (ou zero) indiquem conformidade. As definições variam conforme a fidelidade do cenário:
+
+\begin{itemize}
+    \item \textbf{Cenário I (Geométrico):} A restrição de segurança é definida pela inviolabilidade de um volume de exclusão elipsoidal $\mathcal{B}_{safe}$, dimensionado para mitigar as incertezas típicas da propagação SGP4.
+    
+    Os semi-eixos de segurança no referencial RSW são definidos como $R_{c,U}=1$ km (Radial), $R_{c,V}=5$ km (\textit{Along-Track}) e $R_{c,W}=1$ km (\textit{Cross-Track}). Sendo $\mathbf{r}_i = [r_U, r_V, r_W]^T$ o vetor de posição relativa no instante de máxima aproximação (TCA), calcula-se a métrica de penetração quadrática $k_c^2(\mathbf{x})$:
+    
+    \begin{equation}
+        k_c^2(\mathbf{x}) = \left(\frac{r_U(\mathbf{x})}{R_{c,U}}\right)^2 + \left(\frac{r_V(\mathbf{x})}{R_{c,V}}\right)^2 + \left(\frac{r_W(\mathbf{x})}{R_{c,W}}\right)^2
+    \end{equation}
+
+    A função de restrição para o otimizador é então formulada como:
+    \begin{equation}
+        g_i(\mathbf{x}) = 1 - k_c^2(\mathbf{x})
+    \end{equation}
+    
+    Nesta configuração, qualquer aproximação que penetre o elipsoide resulta em $k_c^2 < 1$, tornando $g_i(\mathbf{x})$ positivo (violação). Se a trajetória mantiver o satélite fora do volume de proteção, $g_i(\mathbf{x})$ será nulo ou negativo (seguro).
+
+    \item \textbf{Cenário II (Probabilístico):} A restrição baseia-se no limite aceitável de probabilidade de colisão ($P_{lim} = 10^{-7}$). A função é definida como:
+    \begin{equation}
+        g_i(\mathbf{x}) = P_{c, i}(\mathbf{x}) - P_{lim}
+    \end{equation}
+    Caso a probabilidade calculada exceda o limiar, $g_i$ assume um valor positivo, ativando a penalidade no algoritmo.
+\end{itemize}
+
+As demais variáveis são definidas como:
+\begin{itemize}
+    \item $\mathbf{x}$: Vetor das variáveis de decisão (cromossomo) $[t_m, \Delta v_t]^T$.
+    \item $J(\mathbf{x})$: Função objetivo a ser minimizada ($|\Delta v_t|$).
+    \item $\mathbf{x}_{lb}, \mathbf{x}_{ub}$: Limites inferiores e superiores do espaço de busca.
+\end{itemize}
+
+\subsection{Codificação e Espaço de Busca}
+
+O indivíduo (cromossomo) é representado por um vetor de números reais contendo as duas variáveis de decisão definidas na Seção \ref{sec:maneuver_modeling}. Para garantir a viabilidade operacional das soluções, impõem-se limites laterais (\textit{box constraints}) ao espaço de busca:
+
+\begin{itemize}
+    \item \textbf{Instante da Manobra ($t_m$):} O espaço de busca é limitado a uma janela temporal $[\, TCA - 48h, \, TCA - 12h \,]$. O limite inferior garante tempo hábil para o planejamento e upload da manobra, enquanto o superior evita manobras de última hora que demandariam $\Delta v$ excessivo.
+    \item \textbf{Magnitude do Impulso ($\Delta v_t$):} Restringe-se a magnitude a um intervalo operacionável, tipicamente $[-1.0, 1.0]$ m/s, permitindo manobras tanto a favor quanto contra o movimento para ajuste de fase.
+\end{itemize}
+
+Os operadores genéticos selecionados são específicos para problemas de otimização em domínios contínuos (\textit{Real-Coded Genetic Algorithms}). A utilização direta de variáveis em ponto flutuante, em detrimento da codificação binária tradicional, elimina a necessidade de discretização do espaço de busca e evita problemas de descontinuidade conhecidos como \textit{Hamming Cliffs} \cite{Deb2001}.
+
+Para a recombinação, utiliza-se o \textit{Simulated Binary Crossover} (SBX) \cite{Deb1995}. Este operador simula a distribuição de probabilidade do crossover binário de um ponto, criando filhos cuja média preserva a média dos pais, mas cuja dispersão (distância entre eles) é controlada por um índice de distribuição ($\eta_c$). Isso permite que o algoritmo alterne eficientemente entre a exploração global e o refinamento local da solução.
+
+Para a mutação, adota-se a \textit{Polynomial Mutation} \cite{Deb1996}, que introduz uma perturbação estocástica baseada em uma distribuição polinomial. Este mecanismo é essencial para manter a diversidade genética da população e evitar a estagnação em mínimos locais, permitindo pequenos ajustes finos nas variáveis $t_m$ e $\Delta v_t$ nas gerações finais.
+
+\subsection{Configuração Experimental e Parâmetros}
+
+Para assegurar a reprodutibilidade dos experimentos e a consistência estatística, os parâmetros do algoritmo genético foram fixados com base nas recomendações padrão da literatura para domínios contínuos \cite{Deb2001}.
+
+A evolução opera sobre uma população fixa de $N_{pop} = 100$ indivíduos ao longo de $N_{gen} = 200$ gerações, totalizando um orçamento computacional de 20.000 avaliações de função por execução independente. Os operadores genéticos foram configurados da seguinte forma:
+
+\begin{itemize}
+    \item \textbf{Recombinação (SBX):} Probabilidade de crossover $p_c = 0.9$ e índice de distribuição $\eta_c = 15$. O alto valor de $p_c$ favorece a troca de informações entre soluções, enquanto $\eta_c$ controla a dispersão dos filhos em relação aos pais.
+    \item \textbf{Mutação Polinomial:} Probabilidade de mutação $p_m = 0.1$ e índice de distribuição $\eta_m = 20$. A aplicação estocástica de mutação previne a convergência prematura para ótimos locais.
+\end{itemize}
+
+Esta configuração busca um equilíbrio entre a capacidade de exploração global do espaço de busca (\textit{exploration}) e o refinamento local das soluções (\textit{exploitation}).
+
+\subsection{Estratégias de Mitigação: Abordagem Individual e Global}
+\label{subsec:mitigation_strategies}
+
+A validação da metodologia proposta é dividida em duas etapas para evidenciar os riscos de se ignorar o ambiente local ao redor do satélite. A \textit{Concern List} é composta por dois grupos distintos de objetos: (i) aqueles que apresentam uma conjunção prevista com o satélite (violando os critérios de segurança na trajetória nominal) e (ii) objetos vizinhos (que orbitam nas proximidades, mas não apresentam risco de colisão sem a realização de manobras).
+
+\textbf{Etapa 1: Otimização Dedicada ao Evento de Risco}
+
+Nesta etapa, o problema é tratado da forma convencional. O algoritmo de otimização é executado exclusivamente para o objeto $k$ que realiza uma conjunção com o satélite. O objetivo é encontrar a manobra ótima que resolva este conflito específico, ignorando a existência dos demais objetos da lista.
+
+Após a obtenção da manobra otimizada, realiza-se uma validação cruzada contra a \textit{Concern List} completa. O objetivo é verificar se a manobra, ao desviar do objeto $k$, altera a trajetória de forma a criar uma nova colisão (conjunção induzida) com os objetos vizinhos que, originalmente, não representavam ameaça.
+
+\textbf{Etapa 2: Otimização Global Multi-Evento}
+
+Nesta abordagem proposta, o algoritmo enfrenta o cenário mais complexo: a existência de múltiplas conjunções ocorrendo dentro da janela de planejamento. O objetivo é determinar uma única manobra capaz de resolver simultaneamente todos os conflitos identificados, sem transferir o risco para os objetos vizinhos.
+
+Neste contexto, a distinção entre objeto principal e secundário se dilui; todos os objetos da \textit{Concern List} são tratados como restrições ativas de segurança. O processo de avaliação do indivíduo pelo AG considera:
+
+\begin{enumerate}
+    \item Propagação da trajetória do satélite com a manobra candidata $\mathbf{x}$.
+    \item Verificação de segurança para o subgrupo de objetos com conjunções previstas (o objetivo é retirar o satélite da região de risco de todos eles simultaneamente).
+    \item Verificação de segurança para o subgrupo de objetos vizinhos (o objetivo é garantir que a manobra não induza novas conjunções com estes objetos).
+    \item Cálculo da violação global de restrições ($\mathcal{V}$), que penaliza qualquer falha em ambos os subgrupos:
+    \begin{equation}
+        \mathcal{V}(\mathbf{x}) = \sum_{i=1}^{N_{obj}} \max(0, g_i(\mathbf{x}))
+        \label{eq:constraint_violation}
+    \end{equation}
+\end{enumerate}
+
+Desta forma, uma solução só é considerada viável se $\mathcal{V}(\mathbf{x}) = 0$, ou seja, se a manobra conseguir ``costurar'' a trajetória entre os múltiplos detritos, mitigando os riscos originais e preservando a integridade em relação ao restante do ambiente.

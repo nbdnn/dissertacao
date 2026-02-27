@@ -288,8 +288,12 @@ def main():
             print(f"{'Kc^2':<18} | {k2_antes:<15.2f} | {res['kc2_depois']:<15.2f} | {res['kc2_depois'] - k2_antes:+.2f}")
             print("=" * 100)
 
-def process_list(conjunctions_list, t_maneuver_date, utc, virtual_propagator, inertialFrame, virtual_tle, base_id, prop_p_orig, p_tle1, p_tle2, print_out=True):
+def process_list(conjunctions_list, t_maneuver_date, utc, virtual_propagator, inertialFrame, virtual_tle, base_id, tle_p, p_tle1, p_tle2, print_out=True):
     results = []
+    
+    # We will need prop_p_orig inside this function
+    from org.orekit.propagation.analytical.tle import TLEPropagator
+    prop_p_orig = TLEPropagator.selectExtrapolator(tle_p)
     
     for conj in sorted(conjunctions_list, key=lambda x: x.get("min_distance_m", float('inf'))):
         sec_id = conj.get("secondary_id", conj.get("sec_id"))

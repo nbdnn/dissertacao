@@ -4,6 +4,7 @@ import json
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
 # Add project root to path
 file_path = os.path.abspath(__file__)
@@ -43,13 +44,21 @@ def load_ephemeris_data(norad_id):
 
 
 def main():
+
+    parser = argparse.ArgumentParser(
+        description="Comparacao entre conjunções TLE e Efémerides."
+    )
+    parser.add_argument('--base', type=int, default=47699, help="NORAD ID do satélite primário.")
+
+    args = parser.parse_args()
+
     setup_orekit()
 
     from org.orekit.propagation.analytical.tle import TLE, TLEPropagator  # type: ignore
     from org.orekit.frames import FramesFactory  # type: ignore
 
     # 1. Load Analysis Objects
-    analysis_file = find_latest_analysis_result()
+    analysis_file = find_latest_analysis_result(base_id=args.base)
     if not analysis_file:
         print("No analysis file found in cenario1/analysis_results")
         return

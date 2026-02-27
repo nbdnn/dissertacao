@@ -1,0 +1,392 @@
+[
+    {
+        "primary_id": 61046,
+        "secondary_id": 63233,
+        "tca_utc": "2026-02-19T21:44:30.739501953125Z",
+        "min_distance_m": 20597.502950740756,
+        "kc_squared": 1.0055717745184438,
+        "primary_tle_line1": "1 61046U 24163B   26049.78637127  .00009276  00000-0  42416-3 0  9999",
+        "primary_tle_line2": "2 61046  52.9826 133.9457 0011720 118.7741 220.0367 15.20866482 79742",
+        "secondary_tle_line1": "1 63233U 25052Z   26051.20087755  .00004818  00000-0  22381-3 0  9999",
+        "secondary_tle_line2": "2 63233  97.4061 305.1081 0005281 195.3270 164.7807 15.20461083 52029",
+        "primary_name": "PRIMARY_VIRTUAL",
+        "secondary_name": "SECONDARY_CANDIDATE",
+        "rc": 20.0,
+        "radial_dist_m": 5314.6963779856815,
+        "along_track_dist_m": -5120.967402839854,
+        "cross_track_dist_m": 19229.84199297154,
+        "relative_speed_m_s": 14707.445651155025,
+        "radial_velocity_m_s": -13.677874276869613,
+        "along_track_velocity_m_s": 14211.90683395412,
+        "cross_track_velocity_m_s": 3785.5613375617413,
+        "relative_velocity_versor": [
+            -0.0009299965882107777,
+            0.9663069421465454,
+            0.2573908092099221
+        ],
+        "is_violated": false,
+        "covariance_matrix_uvw_primary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "covariance_matrix_uvw_secondary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "sigma_uvw_primary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sigma_uvw_secondary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "collision_probability": {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0
+        }
+    },
+    {
+        "primary_id": 61046,
+        "secondary_id": 63233,
+        "tca_utc": "2026-02-20T00:06:33.8984375Z",
+        "min_distance_m": 38498.66635455292,
+        "kc_squared": 3.5216800432859716,
+        "primary_tle_line1": "1 61046U 24163B   26049.78637127  .00009276  00000-0  42416-3 0  9999",
+        "primary_tle_line2": "2 61046  52.9826 133.9457 0011720 118.7741 220.0367 15.20866482 79742",
+        "secondary_tle_line1": "1 63233U 25052Z   26051.20087755  .00004818  00000-0  22381-3 0  9999",
+        "secondary_tle_line2": "2 63233  97.4061 305.1081 0005281 195.3270 164.7807 15.20461083 52029",
+        "primary_name": "PRIMARY_VIRTUAL",
+        "secondary_name": "SECONDARY_CANDIDATE",
+        "rc": 20.0,
+        "radial_dist_m": -12179.209118659823,
+        "along_track_dist_m": -9352.571187391924,
+        "cross_track_dist_m": -35303.5917224849,
+        "relative_speed_m_s": 14716.477568513834,
+        "radial_velocity_m_s": 32.54665997909633,
+        "along_track_velocity_m_s": 14223.815202147289,
+        "cross_track_velocity_m_s": -3775.8090304805737,
+        "relative_velocity_versor": [
+            0.0022115794915986207,
+            0.9665230783607753,
+            -0.25657016177288133
+        ],
+        "is_violated": false,
+        "covariance_matrix_uvw_primary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "covariance_matrix_uvw_secondary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "sigma_uvw_primary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sigma_uvw_secondary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "collision_probability": {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0
+        }
+    },
+    {
+        "primary_id": 61046,
+        "secondary_id": 63220,
+        "tca_utc": "2026-02-20T03:16:46.266357421875Z",
+        "min_distance_m": 39714.569946491094,
+        "kc_squared": 3.7286533814636544,
+        "primary_tle_line1": "1 61046U 24163B   26049.78637127  .00009276  00000-0  42416-3 0  9999",
+        "primary_tle_line2": "2 61046  52.9826 133.9457 0011720 118.7741 220.0367 15.20866482 79742",
+        "secondary_tle_line1": "1 63220U 25052L   26051.13606186  .00007076  00000-0  30468-3 0  9996",
+        "secondary_tle_line2": "2 63220  97.4108 306.1490 0004379 150.2266 209.9220 15.22899901 52076",
+        "primary_name": "PRIMARY_VIRTUAL",
+        "secondary_name": "SECONDARY_CANDIDATE",
+        "rc": 20.0,
+        "radial_dist_m": -3403.3285934784008,
+        "along_track_dist_m": -10105.733488687085,
+        "cross_track_dist_m": -38256.2226464555,
+        "relative_speed_m_s": 14725.032184599824,
+        "radial_velocity_m_s": 35.64310530037155,
+        "along_track_velocity_m_s": 14236.10988724819,
+        "cross_track_velocity_m_s": -3762.7752636504288,
+        "relative_velocity_versor": [
+            0.0024205791100170835,
+            0.966796520970394,
+            -0.2555359619237863
+        ],
+        "is_violated": false,
+        "covariance_matrix_uvw_primary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "covariance_matrix_uvw_secondary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "sigma_uvw_primary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sigma_uvw_secondary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "collision_probability": {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0
+        }
+    },
+    {
+        "primary_id": 61046,
+        "secondary_id": 63220,
+        "tca_utc": "2026-02-20T02:29:27.90478515625Z",
+        "min_distance_m": 42070.39799174663,
+        "kc_squared": 4.199400079725916,
+        "primary_tle_line1": "1 61046U 24163B   26049.78637127  .00009276  00000-0  42416-3 0  9999",
+        "primary_tle_line2": "2 61046  52.9826 133.9457 0011720 118.7741 220.0367 15.20866482 79742",
+        "secondary_tle_line1": "1 63220U 25052L   26051.13606186  .00007076  00000-0  30468-3 0  9996",
+        "secondary_tle_line2": "2 63220  97.4108 306.1490 0004379 150.2266 209.9220 15.22899901 52076",
+        "primary_name": "PRIMARY_VIRTUAL",
+        "secondary_name": "SECONDARY_CANDIDATE",
+        "rc": 20.0,
+        "radial_dist_m": 11302.036833586923,
+        "along_track_dist_m": -10360.08568253726,
+        "cross_track_dist_m": 39177.17416106845,
+        "relative_speed_m_s": 14717.916630894155,
+        "radial_velocity_m_s": -11.488040213308068,
+        "along_track_velocity_m_s": 14227.895638525217,
+        "cross_track_velocity_m_s": 3766.1550257680547,
+        "relative_velocity_versor": [
+            -0.0007805479879668361,
+            0.9667058181767152,
+            0.2558891397619807
+        ],
+        "is_violated": false,
+        "covariance_matrix_uvw_primary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "covariance_matrix_uvw_secondary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "sigma_uvw_primary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sigma_uvw_secondary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "collision_probability": {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0
+        }
+    },
+    {
+        "primary_id": 61046,
+        "secondary_id": 63233,
+        "tca_utc": "2026-02-19T23:19:13.77685546875Z",
+        "min_distance_m": 44203.322877192426,
+        "kc_squared": 4.617602470619933,
+        "primary_tle_line1": "1 61046U 24163B   26049.78637127  .00009276  00000-0  42416-3 0  9999",
+        "primary_tle_line2": "2 61046  52.9826 133.9457 0011720 118.7741 220.0367 15.20866482 79742",
+        "secondary_tle_line1": "1 63233U 25052Z   26051.20087755  .00004818  00000-0  22381-3 0  9999",
+        "secondary_tle_line2": "2 63233  97.4061 305.1081 0005281 195.3270 164.7807 15.20461083 52029",
+        "primary_name": "PRIMARY_VIRTUAL",
+        "secondary_name": "SECONDARY_CANDIDATE",
+        "rc": 20.0,
+        "radial_dist_m": 5400.724318591419,
+        "along_track_dist_m": -11280.660079542298,
+        "cross_track_dist_m": 42397.08289953118,
+        "relative_speed_m_s": 14708.917647741124,
+        "radial_velocity_m_s": -6.953630816644783,
+        "along_track_velocity_m_s": 14214.673487566597,
+        "cross_track_velocity_m_s": 3780.90831109668,
+        "relative_velocity_versor": [
+            -0.000472749320050253,
+            0.9663983324938644,
+            0.25704871028884446
+        ],
+        "is_violated": false,
+        "covariance_matrix_uvw_primary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "covariance_matrix_uvw_secondary": [
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ],
+            [
+                0.0,
+                0.0,
+                0.0
+            ]
+        ],
+        "sigma_uvw_primary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sigma_uvw_secondary": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "collision_probability": {
+            "alfriend1999": 0.0,
+            "alfriend1999_max": 0.0,
+            "alfano2005": 0.0,
+            "patera2005": 0.0,
+            "laas2015": 0.0
+        }
+    }
+]
