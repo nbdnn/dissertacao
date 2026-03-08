@@ -15,7 +15,6 @@ if project_root not in sys.path:
 
 # Orekit Setup
 from app.orekit_config import setup_orekit
-setup_orekit()
 
 
 from app.conjunctions.sieve import sieveAlgorithm
@@ -29,8 +28,7 @@ from cenario2.download_ephemeris import request_sat_catalog, get_spacebook_id, d
 from cenario2.ephemeris_extension import extend_ephemeris_file
 
 
-# Orekit types
-from org.orekit.time import AbsoluteDate, TimeScalesFactory  # type: ignore
+# (Orekit imports moved inside scope where JVM is ready)
 
 
 # Configure Logger Explicitly
@@ -237,6 +235,7 @@ def run_ephemeris_screening(base_id, days, start_date, primaries, secondaries_tl
 
 
 def main():
+    setup_orekit()
     parser = argparse.ArgumentParser()
     parser.add_argument('--base', type=int, default=47699)
     parser.add_argument('--days', type=float, default=5.0)
@@ -307,6 +306,7 @@ def main():
 
     # 2. Download Ephem
     # Convert start_dt to AbsoluteDate for extend function context
+    from org.orekit.time import AbsoluteDate, TimeScalesFactory
     utc = TimeScalesFactory.getUTC()
     abs_start = AbsoluteDate(
         start_dt.year, start_dt.month, start_dt.day,

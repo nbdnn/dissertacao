@@ -11,7 +11,7 @@ from .config import ELLIPSOID_BOUNDS
 from .stk_parser import parse_stk_ephemeris
 
 # --- Configuration ---
-N_WORKERS = 32          # Number of workers for parallel processing
+N_WORKERS = 4
 CHUNKSIZE = 200         # Number of items per chunk to reduce IPC overhead
 
 logging.basicConfig(
@@ -168,15 +168,6 @@ def _sieve_worker(args_chunk):
     Processes a chunk of arguments at once to reduce IPC overhead.
     """
     import jpype
-    from app.orekit_config import setup_orekit
-    setup_orekit()
-    
-    if not jpype.isThreadAttachedToJVM():
-        try:
-            jpype.attachThreadToJVM()
-        except Exception:
-            pass
-
     from org.orekit.time import AbsoluteDate, TimeScalesFactory
     from org.orekit.frames import FramesFactory
     from org.orekit.propagation.analytical.tle import TLE, TLEPropagator
@@ -214,6 +205,9 @@ def _sieve_worker(args_chunk):
 
         initialTime = AbsoluteDate(initialTime_str, utc)
         endTime = initialTime.shiftedBy(daysOfSimulation * 24 * 3600.)
+        
+        if primary_data_raw is not None:
+            primary_data_raw = [(AbsoluteDate(d_str, utc), p, v, c) for d_str, p, v, c in primary_data_raw]
 
         if secondary.get("NORAD_CAT_ID") == primary.get("NORAD_CAT_ID"):
             continue
@@ -474,6 +468,11 @@ def sieveAlgorithm(
         initialTime_str = initialTime.toString()
         primary_states_serializable = [(d.toString(), p, v, None) for d, p, v, _ in primary_states]
 
+        if use_ephem_primary and primary_data_raw is not None:
+            primary_data_raw_serializable = [(d.toString(), p, v, c) for d, p, v, c in primary_data_raw]
+        else:
+            primary_data_raw_serializable = None
+            
         worker_args_list = []
         for idx, sec in enumerate(secondaries):
             worker_args_list.append((
@@ -482,36 +481,26 @@ def sieveAlgorithm(
                 priPeriapsis if should_check_altitude else None, 
                 should_check_altitude, ephemerides_dict, use_ephemeris_files,
                 ephemerides_path if use_ephemeris_files else None,
-                primary_states_serializable, primary_data_raw, use_ephem_primary,
+                primary_states_serializable, primary_data_raw_serializable, use_ephem_primary,
                 ellipsoid_bounds, verboseConjAnalysis, screening_mode
             ))
 
-        import concurrent.futures
-        import multiprocessing
-        
-        # Parallel execution using ProcessPoolExecutor (GIL bypass)
-        # Using global configuration constants N_WORKERS and CHUNKSIZE from config header
-
-        # Chunk the arguments
-        chunked_args = [worker_args_list[i:i + CHUNKSIZE] for i in range(0, len(worker_args_list), CHUNKSIZE)]
-
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=N_WORKERS,
-            mp_context=multiprocessing.get_context('spawn')
-        ) as executor:
-            total_secondaries = len(secondaries)
-            completed = 0
+        # We switch to sequential execution to prevent JPype/Python 3.13 Segfaults
+        # JPype crashes in concurrent environments (ThreadPool/ProcessPool) with JVMNotRunning
+        total_secondaries = len(secondaries)
+        completed = 0
             
-            # Map returns results in order
-            for res_list in executor.map(_sieve_worker, chunked_args):
-                completed += CHUNKSIZE
-                if completed > total_secondaries:
-                    completed = total_secondaries
-                percent = 100.0 * completed / total_secondaries
-                print(f"\rProgress: {percent:.2f}% ({completed}/{total_secondaries}) ", end="", flush=True)
+        for args in worker_args_list:
+            completed += 1
+            sec_id = args[1].get('NORAD_CAT_ID', '???')
+            
+            mode_str = "Ephemeris" if use_ephemeris_files else "TLE"
+            print(f"\r[{completed}/{total_secondaries}] Screening {mode_str} for ID {sec_id}...".ljust(60), end="", flush=True)
+            
+            res_list = _sieve_worker([args])
                 
-                if res_list:
-                    conjunctions.extend(res_list)
+            if res_list:
+                conjunctions.extend(res_list)
 
-        print()
+        print() # Newline after progress bar
     return conjunctions
