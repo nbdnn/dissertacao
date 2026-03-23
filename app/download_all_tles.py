@@ -10,7 +10,8 @@ load_dotenv()
 
 def requestTles():
 
-    filename = "TLE.json"
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    filename = os.path.join(BASE_DIR, "TLE.json")
 
     # 2. Tenta carregar do cache local primeiro
     if os.path.exists(filename):
@@ -74,6 +75,25 @@ def requestTles():
             json.dump(tles, fid, indent=0)  # Assim salva formatado (opcional)
 
         print(f"💾 Sucesso! {len(tles)} objetos salvos em: {filename}")
+        
+        # --- Salva no banco de dados os marcados ---
+        try:
+            from app.database import get_marked_satellites, store_historical_tle
+            marked = set(get_marked_satellites())
+            count_saved = 0
+            for sat in tles:
+                nid = int(sat.get("NORAD_CAT_ID", 0))
+                if nid in marked:
+                    store_historical_tle(nid, sat.get("TLE_LINE1"), sat.get("TLE_LINE2"), sat.get("EPOCH"))
+                    count_saved += 1
+            if count_saved > 0:
+                print(f"📈 Salvos {count_saved} updates no histórico 4D.")
+        except ImportError:
+            pass # Maybe running from outside
+        except Exception as e:
+            print(f"Erro ao salvar histórico: {e}")
+        # -------------------------------------------
+        
         return tles
     else:
         print(f"❌ Erro no download: {resp.text}")
