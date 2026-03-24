@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --color-orbit-dark: #0f172a;
+  --color-orbit-panel: #1e293b;
+  --color-orbit-accent: #3b82f6;
+  --color-orbit-danger: #ef4444;
+}
+
+body {
+  background-color: var(--color-orbit-dark);
+  color: white;
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
