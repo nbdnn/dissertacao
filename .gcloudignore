@@ -1,0 +1,29 @@
+# Sem este arquivo, o `gcloud builds submit` cai no .gitignore para montar o
+# contexto — e o .gitignore exclui TLE.json, que a imagem precisa assar para
+# congelar a entrada do experimento. Este arquivo espelha o .dockerignore.
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.log
+hs_err_pid*.log
+
+orekit-data-main.zip
+docs/
+screenings/
+cenario1/analysis_results/
+cenario1/results_pymoo/
+cenario1/*.json
+cenario1/*.png
+cenario2/data/
+cenario2/results/
+cenario2/analysis_results/
+cenario2/recalculation_results/
+cenario2/screening_ephemeris/
+cenario2/screening_tle/
+java_pipeline/
+maneuvers.txt
+maneuvers2.txt
+uv.lock
+TLE.json.bak.*

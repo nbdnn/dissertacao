@@ -15,8 +15,16 @@ def setup_orekit():
     """
     # 1. Inicializa a JVM se necessário
     # O initVM do orekit_jpype deve lidar com chamadas repetidas
+    #
+    # OREKIT_JVM_XMX limita o heap desta JVM (ex: "-Xmx400m"). Sem isso a JVM
+    # reserva ~25% da RAM da máquina — o que estoura assim que vários workers
+    # (ProcessPoolExecutor) sobem cada um a sua JVM no mesmo host.
+    vmargs = os.getenv("OREKIT_JVM_XMX")
     try:
-        orekit_jpype.initVM()
+        if vmargs:
+            orekit_jpype.initVM(vmargs=vmargs)
+        else:
+            orekit_jpype.initVM()
     except Exception:
         pass
 

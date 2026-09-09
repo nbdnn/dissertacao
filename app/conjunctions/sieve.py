@@ -11,8 +11,12 @@ from .config import ELLIPSOID_BOUNDS
 from .stk_parser import parse_stk_ephemeris
 
 # --- Configuration ---
-N_WORKERS = 4
-CHUNKSIZE = 200         # Number of items per chunk to reduce IPC overhead
+# SIEVE_WORKERS<=1 runs the sieve sequentially (default, preserves previous
+# behaviour); higher values fan the secondaries out over a ProcessPoolExecutor,
+# one JVM per worker. Cap each worker's heap with OREKIT_JVM_XMX, otherwise every
+# JVM reserves ~25% of the machine's RAM independently.
+N_WORKERS = int(os.environ.get("SIEVE_WORKERS", "1"))
+CHUNKSIZE = int(os.environ.get("SIEVE_CHUNKSIZE", "200"))  # items per chunk, to reduce IPC overhead
 
 logging.basicConfig(
     level=logging.INFO,
@@ -168,6 +172,19 @@ def _sieve_worker(args_chunk):
     Processes a chunk of arguments at once to reduce IPC overhead.
     """
     import jpype
+
+    # Under 'spawn' the worker is a fresh process with no JVM, so it has to boot
+    # its own. setup_orekit() is idempotent, so this is a no-op in the sequential
+    # path where the parent already started the JVM.
+    from app.orekit_config import setup_orekit
+    setup_orekit()
+
+    if not jpype.isThreadAttachedToJVM():
+        try:
+            jpype.attachThreadToJVM()
+        except Exception:
+            pass
+
     from org.orekit.time import AbsoluteDate, TimeScalesFactory
     from org.orekit.frames import FramesFactory
     from org.orekit.propagation.analytical.tle import TLE, TLEPropagator
@@ -485,22 +502,59 @@ def sieveAlgorithm(
                 ellipsoid_bounds, verboseConjAnalysis, screening_mode
             ))
 
-        # We switch to sequential execution to prevent JPype/Python 3.13 Segfaults
-        # JPype crashes in concurrent environments (ThreadPool/ProcessPool) with JVMNotRunning
         total_secondaries = len(secondaries)
-        completed = 0
-            
-        for args in worker_args_list:
-            completed += 1
-            sec_id = args[1].get('NORAD_CAT_ID', '???')
-            
-            mode_str = "Ephemeris" if use_ephemeris_files else "TLE"
-            print(f"\r[{completed}/{total_secondaries}] Screening {mode_str} for ID {sec_id}...".ljust(60), end="", flush=True)
-            
-            res_list = _sieve_worker([args])
-                
-            if res_list:
-                conjunctions.extend(res_list)
+        mode_str = "Ephemeris" if use_ephemeris_files else "TLE"
+
+        # Execution mode is controlled by SIEVE_WORKERS (see N_WORKERS above).
+        # Sequential (SIEVE_WORKERS<=1) was the safe default after JPype/Python 3.13
+        # segfaulted under ProcessPool ("JVMNotRunning"); the parallel path is kept
+        # here so that stack can be re-tested on other Python/JPype versions.
+        # Both paths consume worker_args_list in order, so results are identical.
+        if N_WORKERS <= 1:
+            completed = 0
+
+            for args in worker_args_list:
+                completed += 1
+                sec_id = args[1].get('NORAD_CAT_ID', '???')
+
+                print(f"\r[{completed}/{total_secondaries}] Screening {mode_str} for ID {sec_id}...".ljust(60), end="", flush=True)
+
+                res_list = _sieve_worker([args])
+
+                if res_list:
+                    conjunctions.extend(res_list)
+        else:
+            import concurrent.futures
+            import multiprocessing
+
+            chunked_args = [
+                worker_args_list[i:i + CHUNKSIZE]
+                for i in range(0, len(worker_args_list), CHUNKSIZE)
+            ]
+
+            print(
+                f"Screening {mode_str}: {total_secondaries} secondaries, "
+                f"{N_WORKERS} workers, {len(chunked_args)} chunks of {CHUNKSIZE}",
+                flush=True
+            )
+
+            # 'spawn' so each worker starts a clean process and boots its own JVM.
+            # 'fork' copies the parent JVM and breaks Orekit's data providers.
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=N_WORKERS,
+                mp_context=multiprocessing.get_context('spawn')
+            ) as executor:
+                completed = 0
+
+                # executor.map preserves input order, so the aggregated list is
+                # identical to the sequential path.
+                for res_list in executor.map(_sieve_worker, chunked_args):
+                    completed = min(completed + CHUNKSIZE, total_secondaries)
+                    percent = 100.0 * completed / total_secondaries
+                    print(f"\rProgress: {percent:.2f}% ({completed}/{total_secondaries}) ", end="", flush=True)
+
+                    if res_list:
+                        conjunctions.extend(res_list)
 
         print() # Newline after progress bar
     return conjunctions

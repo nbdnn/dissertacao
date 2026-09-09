@@ -22,6 +22,8 @@
 #  Earth-Orientation-Parameters/IAU-2000/finals2000A.all
 #  MSAFE/mmm####f10{""|_prd|-prd}.txt (where mmm is a month abbreviation and #### a year)
 #  CSSI-Space-Weather-Data/SpaceWeather-All-v1.2.txt
+#  Space-Environment-Data/SOLFSMY.TXT
+#  Space-Environment-Data/DTCFILE.TXT
 
 # base URLS
 usno_ser7_url=https://maia.usno.navy.mil/ser7
@@ -29,6 +31,7 @@ iers_rapid_url=https://datacenter.iers.org/data
 msafe_url_uploads=https://www.nasa.gov/wp-content/uploads
 msafe_url_atoms=https://www3.nasa.gov/sites/default/files/atoms/files
 cssi_url=https://ftp.agi.com/pub/DynamicEarthData
+spacenvironment_url=https://sol.spacenvironment.net/JB2008/indices
 
 
 # fetch a file from an URL
@@ -234,3 +237,6 @@ done
 
 # update (overwriting) CSSI space weather data
 (cd CSSI-Space-Weather-Data && fetch_URL $cssi_url SpaceWeather-All-v1.2.txt)
+
+# update (overwriting) space environment data
+(cd Space-Environment-Data && fetch_URL $spacenvironment_url SOLFSMY.TXT && fetch_URL $spacenvironment_url DTCFILE.TXT)

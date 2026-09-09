@@ -27,8 +27,8 @@ def get_keywords() -> Dict[str, str]:
     # each be defined on a line of their own. _version.py will just call
     # get_keywords().
     git_refnames = " (HEAD -> main)"
-    git_full = "38a2e8768a4a7ceb98c3f13ca9e9e8544f46718a"
-    git_date = "2025-12-21 10:51:51 +0100"
+    git_full = "3e376b326373467647b1e246ebb083cd9e57cd68"
+    git_date = "2026-09-03 09:40:02 +0200"
     keywords = {"refnames": git_refnames, "full": git_full, "date": git_date}
     return keywords
 

@@ -16,13 +16,14 @@ manager.addProvider(new DirectoryCrawler(orekitData));
 This zip file contains:
 
 * JPL DE 440 ephemerides from 1990 to 2149 (more accurate than DE441 for current dates),
-* IERS Earth orientation parameters from 1973 to December 2025
-  with predicted data up to late 2024 (both IAU-1980 and IAU-2000),
+* IERS Earth orientation parameters from 1973 to September 2026
+  with predicted data up to late 2026 (both IAU-1980 and IAU-2000),
 * configuration data for ITRF versions used in regular IERS files,
-* leap seconds history from 1972 to end	2025,
-* Marshall Solar Activity Future Estimation from 1999 to December 2025,
-* CSSI Space Weather Data with observed data from 1957 to December 2025
+* leap seconds history from 1972 to end	2026,
+* Marshall Solar Activity Future Estimation from 1999 to September 2026,
+* CSSI Space Weather Data with observed data from 1957 to September 2026
   with predicted data up to 22 years in the future
+* Space environment data (for Jacchia-Bowman 2008 model) from 1997 to end 2026
 * the Eigen 6S gravity field
 * the FES 2004 ocean tides model.
 

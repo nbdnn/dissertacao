@@ -1,0 +1,32 @@
+# Build da imagem da dissertação com a versão do Python parametrizada.
+#
+# `gcloud builds submit --tag` não aceita --build-arg, então a variação do
+# stack (que é justamente o objeto do experimento) precisa deste config.
+#
+#   gcloud builds submit --config=cloudbuild.yaml \
+#       --substitutions=_PY=3.13,_TAG=py313-jpype152-orekit13 .
+substitutions:
+  _PY: "3.11"
+  _TAG: "py311-jpype152-orekit13"
+  _JPYPE: "1.5.2"
+  _OREKIT: "13.1.3.0"
+  _IMAGE: "southamerica-east1-docker.pkg.dev/cosmos-project-479403/cosmos-repo/dissertacao-sieve"
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg=PYTHON_VERSION=${_PY}
+      - --build-arg=JPYPE_VERSION=${_JPYPE}
+      - --build-arg=OREKIT_JPYPE_VERSION=${_OREKIT}
+      - -t
+      - ${_IMAGE}:${_TAG}
+      - .
+
+images:
+  - ${_IMAGE}:${_TAG}
+
+options:
+  machineType: E2_HIGHCPU_8
+
+timeout: 1800s
